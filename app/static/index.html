@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TuneFinder</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside class="nav">
+    <a class="brand" href="#/charts/tr">
+      <img src="/static/icon.svg" alt="" width="28" height="28">
+      <span>TuneFinder</span>
+    </a>
+    <nav>
+      <a href="#/charts/tr" data-nav="charts"><span class="i">📈</span><span>Charts</span></a>
+      <a href="#/genres" data-nav="genres"><span class="i">🎛️</span><span>Genres</span></a>
+      <a href="#/new" data-nav="new"><span class="i">✨</span><span>New</span></a>
+      <a href="#/discover" data-nav="discover"><span class="i">🧭</span><span>Discover</span></a>
+      <a href="#/requests" data-nav="requests"><span class="i">📥</span><span>Requests</span></a>
+    </nav>
+    <div class="nav-foot" id="lidarr-status"></div>
+  </aside>
+
+  <main>
+    <header class="top">
+      <form id="search-form" autocomplete="off">
+        <input id="search" type="search" placeholder="Search artists, albums, songs…" aria-label="Search">
+      </form>
+    </header>
+    <div id="view" class="view"></div>
+  </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <button class="modal-close" aria-label="Close">×</button>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="player" class="player" hidden></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
