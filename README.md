@@ -30,6 +30,17 @@ Every request first asks for a quality (the Lidarr quality profiles: Standard, L
 last choice preselected. Lidarr sets quality per artist, so for an artist already in Lidarr the picker
 shows their current profile and warns that changing it applies to all their albums.
 
+**Wanted vs searching.** Lidarr only searches when told to (or when new uploads appear in its periodic
+RSS check), so an album can be monitored for a long time with no search running. TuneFinder shows
+*Searching* only while Lidarr has an AlbumSearch/ArtistSearch command queued or running. Otherwise a
+monitored, missing album shows **Search now**, which goes through the quality picker and starts a search.
+
+**Remove** (server owner only) stops Lidarr wanting the album, cancels its downloads, deletes its
+files, and deletes the seeding torrent in qBittorrent (`QBITTORRENT_*`, category `music` only),
+unless another album that still has files came from the same torrent. If the artist is left with
+nothing, they are removed from Lidarr as well. **Remove artist** deletes the artist with all files
+and torrents.
+
 "Add whole artist" adds the artist with every album monitored and searches for all of them.
 
 The Lidarr metadata profile named in `LIDARR_METADATA_PROFILE` should allow Albums, EPs and Singles,
@@ -53,6 +64,9 @@ among its resources, which means the owner and anyone the server is shared with.
 | `LIDARR_QUALITY_PROFILE` | `Standard` | Quality profile name |
 | `LIDARR_METADATA_PROFILE` | `TuneFinder` | Metadata profile name |
 | `PLEX_SERVER_ID` | | Required. The Plex server's machine identifier (`/identity` on the server) |
+| `QBITTORRENT_URL` | | Optional. Enables deleting seeding torrents on Remove |
+| `QBITTORRENT_USER` / `QBITTORRENT_PASSWORD` | `admin` / | qBittorrent Web UI login |
+| `QBITTORRENT_CATEGORY` | `music` | Only torrents in this category are ever deleted |
 | `NEW_RELEASE_DAYS` | `120` | How far back "New" looks |
 | `DATA_DIR` | `/data` | Where the request history (SQLite) is stored |
 

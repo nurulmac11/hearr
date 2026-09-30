@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from . import auth, config, store
 from .deezer import Deezer, DeezerError
 from .lidarr import Lidarr, LidarrError
+from .qbit import Qbit
 from .matching import (AUTO_ACCEPT, SUGGEST_MIN, artist_matches, clean_title, norm_artist, norm_title,
                        score_candidate)
 
@@ -23,6 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 STATIC = Path(__file__).parent / "static"
 dz = Deezer()
 lidarr = Lidarr()
+qbit = Qbit()
 _background: set[asyncio.Task] = set()
 
 
@@ -615,6 +617,103 @@ async def request_artist(body: ArtistRequest, request: Request):
               lidarr_artist_id=added.get("id"), foreign_id=added.get("foreignArtistId"),
               requested_by=who)
     return {"status": "wanted", "message": f"Added {name} to Lidarr with all albums. Searching now."}
+
+
+class DeezerRef(BaseModel):
+    deezer_id: int
+
+
+async def _lidarr_album_for(deezer_id: int) -> tuple[dict, dict | None]:
+    info = album_out(await dz.album(deezer_id))
+    snap = await lidarr.snapshot()
+    return info, snap["album_index"].get((norm_artist(info["artist"]), norm_title(info["title"])))
+
+
+def _require_owner(request: Request) -> None:
+    if not request.state.user.get("owner"):
+        raise HTTPException(403, "Only the Plex server owner can remove music.")
+
+
+class SearchRequest(BaseModel):
+    deezer_id: int
+    quality_profile_id: int | None = None
+
+
+@app.post("/api/search/album")
+async def search_album(body: SearchRequest):
+    quality = await _checked_quality(body.quality_profile_id)
+    info, al = await _lidarr_album_for(body.deezer_id)
+    if not al:
+        raise HTTPException(404, "This album isn't in Lidarr yet. Request it first.")
+    if quality:
+        await lidarr.set_artist_quality(al["artistId"], quality)
+    await lidarr.monitor_and_search(al["id"])
+    return {"status": "searching", "message": f"Lidarr is searching for “{info['title']}”."}
+
+
+async def _delete_torrents(hashes: set[str], keep_albums_with_files: set[int]) -> list[str]:
+    """Delete seeding torrents unless another album that still has files came from the same one."""
+    if not hashes or not qbit.configured():
+        return []
+    snap = await lidarr.snapshot()
+    with_files = {a["id"] for a in snap["albums"]
+                  if (a.get("statistics") or {}).get("trackFileCount")} - keep_albums_with_files
+    safe = []
+    for h in hashes:
+        if not (await lidarr.albums_for_download(h)) & with_files:
+            safe.append(h)
+    try:
+        return await qbit.delete_torrents(safe, config.QBITTORRENT_CATEGORY)
+    except Exception as e:  # removal already happened; the torrent is a bonus
+        log.warning("Couldn't delete torrents: %s", e)
+        return []
+
+
+def _removed_message(what: str, res: dict, torrents: list[str], artist_removed: str | None) -> str:
+    parts = [f"deleted {res['files']} file{'s' if res['files'] != 1 else ''}"] if res["files"] else []
+    if res.get("cancelled"):
+        parts.append("cancelled the download")
+    if torrents:
+        parts.append("deleted the seeding torrent" + ("s" if len(torrents) > 1 else ""))
+    if artist_removed:
+        parts.append(f"removed {artist_removed} from Lidarr")
+    return f"Removed {what}" + (": " + ", ".join(parts) if parts else "") + "."
+
+
+@app.post("/api/remove/album")
+async def remove_album(body: DeezerRef, request: Request):
+    _require_owner(request)
+    info, al = await _lidarr_album_for(body.deezer_id)
+    if not al:
+        raise HTTPException(404, "This album isn't in Lidarr.")
+    hashes = await lidarr.download_ids(album_id=al["id"])
+    res = await lidarr.remove_album(al["id"])
+    lidarr.invalidate()
+    torrents = await _delete_torrents(hashes, keep_albums_with_files={al["id"]})
+    artist_removed = None
+    if await lidarr.artist_is_empty(al["artistId"]):
+        await lidarr.remove_artist(al["artistId"])
+        artist_removed = info["artist"]
+    log.info("%s removed album %s (%s)", request.state.user["username"], info["title"], res)
+    return {"status": "none", "artist_removed": bool(artist_removed),
+            "message": _removed_message(f"“{info['title']}”", res, torrents, artist_removed)}
+
+
+@app.post("/api/remove/artist")
+async def remove_artist(body: DeezerRef, request: Request):
+    _require_owner(request)
+    a = await dz.artist(body.deezer_id)
+    snap = await lidarr.snapshot()
+    existing = snap["artist_names"].get(norm_artist(a["name"]))
+    if not existing:
+        raise HTTPException(404, f"{a['name']} isn't in Lidarr.")
+    hashes = await lidarr.download_ids(artist_id=existing["id"])
+    artist_album_ids = {al["id"] for al in snap["albums"] if al["artistId"] == existing["id"]}
+    res = await lidarr.remove_artist(existing["id"])
+    lidarr.invalidate()
+    torrents = await _delete_torrents(hashes, keep_albums_with_files=artist_album_ids)
+    log.info("%s removed artist %s (%s)", request.state.user["username"], a["name"], res)
+    return {"status": "none", "message": _removed_message(a["name"], res, torrents, None)}
 
 
 @app.get("/api/requests")

@@ -100,7 +100,7 @@ h2 small, .sub { color: var(--muted); font-weight: 400; font-size: 14px; }
   padding: 3px 8px; border-radius: 999px; backdrop-filter: blur(6px); background: rgba(0, 0, 0, .55);
 }
 .pill.library { color: var(--ok); }
-.pill.wanted, .pill.requested { color: var(--warn); }
+.pill.wanted, .pill.requested, .pill.searching { color: var(--warn); }
 .pill.downloading { color: var(--info); }
 
 .artist-card { text-align: center; }
@@ -116,9 +116,12 @@ h2 small, .sub { color: var(--muted); font-weight: 400; font-size: 14px; }
 .btn.primary { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #fff; }
 .btn.primary:hover { filter: brightness(1.1); }
 .btn.ghost { background: transparent; border: 1px solid var(--line); }
+.btn.danger { background: var(--bad); color: #1a0d0d; }
+.btn.danger-text { color: var(--bad); border-color: rgba(248, 113, 113, .35); }
+.btn.state-wanted:not(:disabled):hover { filter: brightness(1.25); }
 .btn:disabled { cursor: default; opacity: .9; }
 .btn.state-library { background: rgba(52, 211, 153, .15); color: var(--ok); }
-.btn.state-wanted, .btn.state-requested { background: rgba(251, 191, 36, .14); color: var(--warn); }
+.btn.state-wanted, .btn.state-requested, .btn.state-searching { background: rgba(251, 191, 36, .14); color: var(--warn); }
 .btn.state-downloading { background: rgba(96, 165, 250, .15); color: var(--info); }
 .btn.sm { padding: 6px 11px; font-size: 12px; }
 .btn .spin { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }

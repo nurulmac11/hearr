@@ -87,19 +87,30 @@ class Lidarr:
         async with self._snapshot_lock:
             if self._snapshot and time.monotonic() - self._snapshot_at < 60:
                 return self._snapshot
-            artists, albums, queue = await asyncio.gather(
+            artists, albums, queue, commands = await asyncio.gather(
                 self._req("GET", "/artist"),
                 self._req("GET", "/album"),
                 self._req("GET", "/queue", params={"pageSize": 500}),
+                self._req("GET", "/command"),
             )
             by_id = {a["id"]: a for a in artists}
             queued = {r["albumId"] for r in queue.get("records", []) if r.get("albumId")}
+            searching_albums, searching_artists = set(), set()
+            for cmd in commands or []:
+                if cmd.get("status") not in ("queued", "started"):
+                    continue
+                body = cmd.get("body") or {}
+                if cmd.get("name") == "AlbumSearch":
+                    searching_albums |= set(body.get("albumIds") or [])
+                elif cmd.get("name") == "ArtistSearch" and body.get("artistId"):
+                    searching_artists.add(body["artistId"])
             album_index: dict[tuple[str, str], dict] = {}
             for al in albums:
                 artist = by_id.get(al["artistId"])
                 if not artist:
                     continue
                 al["_queued"] = al["id"] in queued
+                al["_searching"] = al["id"] in searching_albums or al["artistId"] in searching_artists
                 album_index.setdefault((norm_artist(artist["artistName"]), norm_title(al["title"])), al)
             self._snapshot = {
                 "artists": artists,
@@ -114,7 +125,11 @@ class Lidarr:
 
     @staticmethod
     def album_state(al: dict | None) -> str:
-        """library | downloading | wanted | known (in Lidarr, not monitored) | none"""
+        """library | downloading | searching | wanted | known (in Lidarr, not monitored) | none
+
+        "wanted" means monitored but missing with no search running; Lidarr only searches
+        when told to (or when new releases show up in its periodic RSS check).
+        """
         if not al:
             return "none"
         stats = al.get("statistics") or {}
@@ -122,6 +137,8 @@ class Lidarr:
             return "library"
         if al.get("_queued"):
             return "downloading"
+        if al.get("monitored") and al.get("_searching"):
+            return "searching"
         if al.get("monitored"):
             return "wanted"
         return "known"
@@ -212,6 +229,63 @@ class Lidarr:
             await self._req("PUT", "/album/monitor", json={"albumIds": ids, "monitored": True})
         await self._req("POST", "/command", json={"name": "ArtistSearch", "artistId": artist_id})
         self.invalidate()
+
+    async def search_album(self, album_id: int) -> None:
+        await self._req("POST", "/command", json={"name": "AlbumSearch", "albumIds": [album_id]})
+        self.invalidate()
+
+    async def download_ids(self, album_id: int | None = None, artist_id: int | None = None) -> set[str]:
+        """Torrent hashes Lidarr grabbed for an album or a whole artist."""
+        if album_id:
+            records = (await self._req("GET", "/history", params={
+                "pageSize": 500, "eventType": 1, "albumId": album_id})).get("records", [])  # 1 = grabbed
+        elif artist_id:
+            # /history ignores artistId; /history/artist filters properly.
+            records = await self._req("GET", "/history/artist",
+                                      params={"artistId": artist_id, "eventType": 1}) or []
+        else:
+            return set()
+        return {r["downloadId"] for r in records if r.get("downloadId")}
+
+    async def albums_for_download(self, download_id: str) -> set[int]:
+        records = (await self._req("GET", "/history", params={
+            "pageSize": 200, "downloadId": download_id})).get("records", [])
+        return {r["albumId"] for r in records if r.get("albumId")}
+
+    async def _cancel_queue(self, predicate) -> int:
+        queue = await self._req("GET", "/queue", params={"pageSize": 500})
+        n = 0
+        for r in queue.get("records", []):
+            if predicate(r):
+                await self._req("DELETE", f"/queue/{r['id']}",
+                                params={"removeFromClient": "true", "blocklist": "false"})
+                n += 1
+        return n
+
+    async def remove_album(self, album_id: int) -> dict:
+        """Stop wanting an album, cancel its downloads and delete its files."""
+        await self._req("PUT", "/album/monitor", json={"albumIds": [album_id], "monitored": False})
+        cancelled = await self._cancel_queue(lambda r: r.get("albumId") == album_id)
+        files = await self._req("GET", "/trackfile", params={"albumId": album_id}) or []
+        if files:
+            await self._req("DELETE", "/trackfile/bulk", json={"trackFileIds": [f["id"] for f in files]})
+        self.invalidate()
+        return {"files": len(files), "cancelled": cancelled}
+
+    async def artist_is_empty(self, artist_id: int) -> bool:
+        """No files left and nothing monitored."""
+        albums = await self._req("GET", "/album", params={"artistId": artist_id}) or []
+        return all(not a["monitored"] and not (a.get("statistics") or {}).get("trackFileCount")
+                   for a in albums)
+
+    async def remove_artist(self, artist_id: int) -> dict:
+        """Delete an artist from Lidarr together with all of their files."""
+        albums = await self._req("GET", "/album", params={"artistId": artist_id}) or []
+        files = sum((a.get("statistics") or {}).get("trackFileCount", 0) for a in albums)
+        cancelled = await self._cancel_queue(lambda r: r.get("artistId") == artist_id)
+        await self._req("DELETE", f"/artist/{artist_id}", params={"deleteFiles": "true"})
+        self.invalidate()
+        return {"files": files, "cancelled": cancelled}
 
     async def album(self, album_id: int) -> dict | None:
         try:

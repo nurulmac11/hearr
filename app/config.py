@@ -27,3 +27,9 @@ NEW_RELEASE_DAYS = int(_env("NEW_RELEASE_DAYS", "120"))
 
 # Sign in with Plex: users must have access to this Plex server (its machine identifier).
 PLEX_SERVER_ID = _env("PLEX_SERVER_ID")
+
+# Optional: lets "Remove" also delete the seeding torrent (only torrents in this category).
+QBITTORRENT_URL = _env("QBITTORRENT_URL").rstrip("/")
+QBITTORRENT_USER = _env("QBITTORRENT_USER", "admin")
+QBITTORRENT_PASSWORD = _env("QBITTORRENT_PASSWORD")
+QBITTORRENT_CATEGORY = _env("QBITTORRENT_CATEGORY", "music")

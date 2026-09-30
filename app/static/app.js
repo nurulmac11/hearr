@@ -103,13 +103,14 @@ const typeLabel = (t) => ({ album: "Album", ep: "EP", single: "Single", compile:
 
 const STATE_LABEL = {
   library: "✓ In library",
-  wanted: "Searching",
+  searching: "Searching…",
   requested: "Requested",
   downloading: "Downloading",
 };
 
 // Remember statuses changed in this session so other views of the same album agree.
 const statusOverride = new Map();
+let currentUser = null;
 
 function statusOf(album) {
   return statusOverride.get(album.id) || album.status || "none";
@@ -117,15 +118,20 @@ function statusOf(album) {
 
 function requestButton(album, cls = "") {
   const st = statusOf(album);
-  if (STATE_LABEL[st]) {
-    return `<button class="btn ${cls} state-${st}" disabled>${STATE_LABEL[st]}</button>`;
+  const attrs = `data-album-state="${album.id}" data-title="${esc(album.title || "")}"`;
+  if (st === "wanted") {
+    return `<button class="btn ${cls} state-wanted" data-search="${album.id}" ${attrs}
+      title="Lidarr wants this but isn't searching right now">⟳ Search now</button>`;
   }
-  return `<button class="btn primary ${cls}" data-request="${album.id}" data-title="${esc(album.title || "")}">＋ Request</button>`;
+  if (STATE_LABEL[st]) {
+    return `<button class="btn ${cls} state-${st}" disabled ${attrs}>${STATE_LABEL[st]}</button>`;
+  }
+  return `<button class="btn primary ${cls}" data-request="${album.id}" ${attrs}>＋ Request</button>`;
 }
 
 function pillFor(album) {
   const st = statusOf(album);
-  const label = { library: "IN LIBRARY", wanted: "SEARCHING", requested: "REQUESTED", downloading: "DOWNLOADING" }[st];
+  const label = { library: "IN LIBRARY", wanted: "WANTED", searching: "SEARCHING", requested: "REQUESTED", downloading: "DOWNLOADING" }[st];
   return label ? `<span class="pill ${st}">${label}</span>` : "";
 }
 
@@ -134,13 +140,10 @@ function refreshButtons(albumId, btn = null) {
     btn.disabled = false;
     btn.textContent = btn.dataset.restore;
   }
-  document.querySelectorAll(`[data-request="${albumId}"], [data-album-state="${albumId}"]`).forEach((old) => {
+  document.querySelectorAll(`[data-album-state="${albumId}"]`).forEach((old) => {
     const holder = document.createElement("span");
     holder.innerHTML = requestButton({ id: albumId, title: old.dataset.title }, old.classList.contains("sm") ? "sm" : "");
-    const fresh = holder.firstElementChild;
-    fresh.dataset.albumState = albumId;
-    fresh.dataset.title = old.dataset.title || "";
-    old.replaceWith(fresh);
+    old.replaceWith(holder.firstElementChild);
   });
 }
 
@@ -217,6 +220,79 @@ function showCandidates(albumId, r) {
 }
 
 // ---------------------------------------------------------------------------
+// Search now / Remove
+
+function confirmModal(title, body, action) {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2 style="margin-top:0">${title}</h2>
+      <p class="sub" style="font-size:15px">${body}</p>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+        <button class="btn ghost" id="c-no">Cancel</button>
+        <button class="btn danger" id="c-yes">${action}</button>
+      </div>`);
+    $("#c-no").onclick = () => { closeModal(); resolve(null); };
+    $("#c-yes").onclick = (e) => resolve(e.currentTarget);
+  });
+}
+
+async function searchNow(albumId, btn, quality) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Searching';
+  try {
+    const r = await api("/search/album", {
+      method: "POST", body: JSON.stringify({ deezer_id: albumId, quality_profile_id: quality }),
+    });
+    statusOverride.set(albumId, "searching");
+    refreshButtons(albumId);
+    closeModal();
+    toast(r.message, "ok");
+  } catch (e) {
+    toast(e.message, "err");
+    btn.disabled = false;
+    btn.textContent = btn.dataset.restore;
+  }
+}
+
+async function removeAlbum(albumId, title) {
+  const yes = await confirmModal(`Remove “${esc(title)}”?`,
+    "Deletes its files from your music library, stops Lidarr from downloading it again and deletes the " +
+    "seeding torrent. If it was the artist's only album, the artist is removed from Lidarr too.", "Remove");
+  if (!yes) return;
+  yes.disabled = true;
+  yes.innerHTML = '<span class="spin"></span> Removing';
+  try {
+    const r = await api("/remove/album", { method: "POST", body: JSON.stringify({ deezer_id: albumId }) });
+    statusOverride.set(albumId, "none");
+    closeModal();
+    toast(r.message, "ok");
+    route();
+  } catch (e) {
+    closeModal();
+    toast(e.message, "err");
+  }
+}
+
+async function removeArtist(artistId, name) {
+  const yes = await confirmModal(`Remove ${esc(name)}?`,
+    `Deletes <b>every</b> file by ${esc(name)} from your music library, removes them from Lidarr and ` +
+    "deletes their seeding torrents. This can't be undone.", "Remove artist");
+  if (!yes) return;
+  yes.disabled = true;
+  yes.innerHTML = '<span class="spin"></span> Removing';
+  try {
+    const r = await api("/remove/artist", { method: "POST", body: JSON.stringify({ deezer_id: artistId }) });
+    statusOverride.clear();
+    closeModal();
+    toast(r.message, "ok");
+    route();
+  } catch (e) {
+    closeModal();
+    toast(e.message, "err");
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Quality picker (shown before every request)
 
 let qualityCache = null;
@@ -231,7 +307,7 @@ async function openQualityPicker(kind, id, title) {
   try {
     [q, ctx] = await Promise.all([
       qualityCache || api("/qualities"),
-      api(`/request/context?${kind === "album" ? "album_id" : "artist_id"}=${id}`),
+      api(`/request/context?${kind === "artist" ? "artist_id" : "album_id"}=${id}`),
     ]);
     qualityCache = q;
   } catch (e) {
@@ -243,7 +319,9 @@ async function openQualityPicker(kind, id, title) {
   const current = ctx.quality_profile_id;
   let selected = [current, savedQuality(), q.default].find((x) => x && ids.includes(x));
   const nameOf = (pid) => q.profiles.find((p) => p.id === pid)?.name || "";
-  const heading = kind === "album" ? `Request “${esc(title)}”` : `Add all of ${esc(ctx.artist)}`;
+  const heading = kind === "album" ? `Request “${esc(title)}”`
+    : kind === "search" ? `Search for “${esc(title)}”` : `Add all of ${esc(ctx.artist)}`;
+  const action = { album: "Request", search: "Search now", artist: "Add artist" }[kind];
 
   const render = () => {
     const warn = ctx.in_library && current && selected !== current
@@ -261,7 +339,7 @@ async function openQualityPicker(kind, id, title) {
       ${warn}
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
         <button class="btn ghost" id="q-cancel">Cancel</button>
-        <button class="btn primary" id="q-go" data-restore="${kind === "album" ? "Request" : "Add artist"}">${kind === "album" ? "Request" : "Add artist"}</button>
+        <button class="btn primary" id="q-go" data-restore="${action}">${action}</button>
       </div>`;
     $("#modal-body").querySelectorAll('input[name="quality"]').forEach((r) => r.onchange = () => {
       selected = Number(r.value);
@@ -271,6 +349,7 @@ async function openQualityPicker(kind, id, title) {
     $("#q-go").onclick = (ev) => {
       try { localStorage.setItem("tfQuality", String(selected)); } catch { /* ignore */ }
       if (kind === "album") requestAlbum(id, null, ev.currentTarget, selected);
+      else if (kind === "search") searchNow(id, ev.currentTarget, selected);
       else requestArtist(id, ev.currentTarget, selected);
     };
   };
@@ -283,6 +362,23 @@ document.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
     openQualityPicker("album", Number(req.dataset.request), req.dataset.title || "");
+    return;
+  }
+  const srch = e.target.closest("[data-search]");
+  if (srch) {
+    e.preventDefault();
+    e.stopPropagation();
+    openQualityPicker("search", Number(srch.dataset.search), srch.dataset.title || "");
+    return;
+  }
+  const rmAlbum = e.target.closest("[data-remove-album]");
+  if (rmAlbum) {
+    removeAlbum(Number(rmAlbum.dataset.removeAlbum), rmAlbum.dataset.title);
+    return;
+  }
+  const rmArtist = e.target.closest("[data-remove-artist]");
+  if (rmArtist) {
+    removeArtist(Number(rmArtist.dataset.removeArtist), rmArtist.dataset.name);
     return;
   }
   const pick = e.target.closest("[data-pick]");
@@ -510,6 +606,7 @@ async function viewArtist(id) {
           <div class="sub">${fmtFans(a.fans)}</div>
           <div class="actions">
             <button class="btn ghost" data-request-artist="${a.id}" data-name="${esc(a.name)}">Add whole artist</button>
+            ${currentUser?.owner && a.in_library ? `<button class="btn ghost danger-text" data-remove-artist="${a.id}" data-name="${esc(a.name)}">Remove artist</button>` : ""}
           </div>
         </div>
       </div>
@@ -537,7 +634,8 @@ async function viewAlbum(id) {
         <div class="sub"><a href="#/artist/${a.artist_id}" style="text-decoration:underline">${esc(a.artist)}</a>
           · ${d.tracks.length} tracks${a.label ? " · " + esc(a.label) : ""}</div>
         ${a.genres.length ? `<div class="chips">${a.genres.map((g) => `<span class="chip">${esc(g)}</span>`).join("")}</div>` : ""}
-        <div class="actions">${requestButton(a)}</div>
+        <div class="actions">${requestButton(a)}
+          ${currentUser?.owner && statusOf(a) !== "none" ? `<button class="btn ghost danger-text" data-remove-album="${a.id}" data-title="${esc(a.title)}">Remove</button>` : ""}</div>
       </div>
     </div>
     <h2>Tracks</h2>
@@ -555,7 +653,8 @@ async function viewRequests() {
   view.innerHTML = "<h1>Requests</h1><div class='loading'>Loading…</div>";
   const d = await api("/requests");
   const label = {
-    library: ["✓ Downloaded", "state-library"], wanted: ["Searching", "state-wanted"],
+    library: ["✓ Downloaded", "state-library"], wanted: ["Wanted", "state-wanted"],
+    searching: ["Searching…", "state-wanted"],
     downloading: ["Downloading", "state-downloading"], refreshing: ["Adding to Lidarr", "state-requested"],
     requested: ["Requested", "state-requested"], failed: ["Failed", ""], missing: ["Removed from Lidarr", ""],
     known: ["Not monitored", ""], artist: ["Whole artist", "state-requested"], unknown: ["Lidarr offline", ""],
@@ -651,6 +750,7 @@ $("#login-btn").addEventListener("click", startLogin);
     showLogin();
     return;
   }
+  currentUser = user;
   document.body.classList.remove("locked");
   $("#login").hidden = true;
   loadStatus(user);
