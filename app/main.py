@@ -405,13 +405,51 @@ def _allowed_qualities(profile: dict) -> set[str]:
     return names - {"Unknown"}
 
 
+HIRES = {"FLAC 24bit", "ALAC 24bit"}
+# Typical average bitrates (kbps). Lossless varies with the music; these are common averages.
+LOSSY_KBPS = {
+    "MP3-VBR-V2": 190, "MP3-VBR-V0": 245, "AAC-VBR": 256, "WMA": 192,
+    "OGG Vorbis Q5": 160, "OGG Vorbis Q6": 192, "OGG Vorbis Q7": 224, "OGG Vorbis Q8": 256,
+    "OGG Vorbis Q9": 320, "OGG Vorbis Q10": 500,
+}
+CD_LOSSLESS_KBPS = 900   # 16-bit/44.1 kHz FLAC averages ~700-1100 kbps
+HIRES_KBPS = 2800        # 24-bit/96 kHz FLAC averages ~2500-3300 kbps
+
+
+def _lossy_kbps(name: str) -> int | None:
+    if name in LOSSY_KBPS:
+        return LOSSY_KBPS[name]
+    m = re.match(r"(?:MP3|AAC)-(\d+)$", name)
+    return int(m.group(1)) if m else None
+
+
+def _quality_kbps(profile: dict) -> dict:
+    """Low / typical / high average bitrate for what this profile would download.
+
+    Lidarr grabs the best quality it finds within the profile, so "typical" is the best
+    commonly available format and "high" covers rarer hi-res releases.
+    """
+    allowed = _allowed_qualities(profile)
+    lossy = [k for k in (_lossy_kbps(n) for n in allowed - LOSSLESS) if k and k >= 128]
+    has_cd = bool(allowed & (LOSSLESS - HIRES))
+    has_hires = bool(allowed & HIRES)
+    if has_cd or has_hires:
+        typical = CD_LOSSLESS_KBPS if has_cd else HIRES_KBPS
+        low = min(lossy) if lossy else (CD_LOSSLESS_KBPS * 0.75 if has_cd else 1500)
+    else:
+        typical = min(max(lossy), 320) if lossy else 320
+        low = min(lossy) if lossy else typical
+    high = HIRES_KBPS if has_hires else typical
+    return {"low": low, "typical": typical, "high": high}
+
+
 def _quality_description(profile: dict) -> str:
     allowed = _allowed_qualities(profile)
     if allowed and allowed <= LOSSLESS:
-        return "FLAC / ALAC. Best sound, about 3x the size (~350 MB per album). Fewer downloads available."
+        return "FLAC / ALAC. Best sound, about 3x the size of MP3. Fewer downloads available."
     if not allowed & LOSSLESS:
-        return "MP3 / AAC up to 320 kbps. Sounds great, small files (~100 MB per album)."
-    return "Whatever turns up first, lossless or MP3."
+        return "MP3 / AAC up to 320 kbps. Sounds great, small files."
+    return "Whatever turns up first. Lidarr prefers the best, so usually FLAC."
 
 
 @app.get("/api/qualities")
@@ -423,24 +461,65 @@ async def qualities():
         return 0 if not allowed & LOSSLESS else 1 if allowed <= LOSSLESS else 2
     return {
         "default": default,
-        "profiles": [{"id": p["id"], "name": p["name"], "description": _quality_description(p)}
+        "profiles": [{"id": p["id"], "name": p["name"], "description": _quality_description(p),
+                      "kbps": _quality_kbps(p)}
                      for p in sorted(profiles, key=rank)],
     }
 
 
+async def _discography_seconds(artist_id: int) -> tuple[int, int]:
+    """Rough length of what adding a new artist would download: albums, EPs and singles,
+    with editions of the same release (deluxe, remaster…) counted once."""
+    seen, picked = set(), []
+    for al in await dz.artist_albums(artist_id):
+        if al.get("record_type") not in ("album", "ep", "single"):
+            continue
+        key = norm_title(al["title"])
+        if key not in seen:
+            seen.add(key)
+            picked.append(al["id"])
+    details = await asyncio.gather(*(dz.album(i) for i in picked[:80]), return_exceptions=True)
+    return sum(d.get("duration", 0) for d in details if isinstance(d, dict)), len(picked)
+
+
+async def _free_bytes() -> int | None:
+    try:
+        folders = await lidarr._req("GET", "/rootfolder")
+    except LidarrError:
+        return None
+    for f in folders or []:
+        if f["path"].rstrip("/") == config.LIDARR_ROOT_FOLDER.rstrip("/"):
+            return f.get("freeSpace")
+    return (folders[0].get("freeSpace") if folders else None)
+
+
 @app.get("/api/request/context")
 async def request_context(album_id: int | None = None, artist_id: int | None = None):
-    """What the quality picker needs: is the artist already in Lidarr, and at which quality."""
+    """What the quality picker needs: is the artist in Lidarr (at which quality), how much
+    music the request covers, and how much disk space is free."""
+    snap = await lidarr.snapshot()
     if album_id:
-        name = album_out(await dz.album(album_id))["artist"]
+        a = await dz.album(album_id)
+        name = album_out(a)["artist"]
+        seconds, albums, rough = a.get("duration") or 0, 1, False
     elif artist_id:
         name = (await dz.artist(artist_id))["name"]
+        existing = snap["artist_names"].get(norm_artist(name))
+        if existing:
+            # Lidarr knows exactly which albums it would fetch; count the ones not on disk yet.
+            missing = [al for al in snap["albums"] if al["artistId"] == existing["id"]
+                       and lidarr.album_state(al) != "library"]
+            seconds = sum(al.get("duration") or 0 for al in missing) // 1000
+            albums, rough = len(missing), False
+        else:
+            (seconds, albums), rough = await _discography_seconds(artist_id), True
     else:
         raise HTTPException(400, "album_id or artist_id is required")
-    snap = await lidarr.snapshot()
     existing = snap["artist_names"].get(norm_artist(name))
     return {"artist": name, "in_library": bool(existing),
-            "quality_profile_id": existing.get("qualityProfileId") if existing else None}
+            "quality_profile_id": existing.get("qualityProfileId") if existing else None,
+            "seconds": seconds, "albums": albums, "rough": rough,
+            "free_bytes": await _free_bytes()}
 
 
 async def _checked_quality(qid: int | None) -> int | None:

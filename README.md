@@ -30,6 +30,13 @@ Every request first asks for a quality (the Lidarr quality profiles: Standard, L
 last choice preselected. Lidarr sets quality per artist, so for an artist already in Lidarr the picker
 shows their current profile and warns that changing it applies to all their albums.
 
+**Size estimates.** The picker shows an estimated size per quality: album length (from Deezer) × a
+typical bitrate (320 kbps for MP3/AAC, ~900 kbps for CD-quality FLAC, ~2800 kbps for 24-bit hi-res),
+plus free space on the music disk. Checked against real downloads: Deadbeat 134 MB estimated / 129 MB
+actual (MP3 320), Discovery ~410 MB / 418 MB (FLAC). For a whole artist already in Lidarr, the
+length is the exact sum of the albums not on disk yet. For a new artist it's a rough sum of their
+Deezer albums, EPs and singles with duplicate editions counted once.
+
 **Wanted vs searching.** Lidarr only searches when told to (or when new uploads appear in its periodic
 RSS check), so an album can be monitored for a long time with no search running. TuneFinder shows
 *Searching* only while Lidarr has an AlbumSearch/ArtistSearch command queued or running. Otherwise a

@@ -43,3 +43,19 @@ def test_deluxe_matches_standard():
 def test_wrong_artist_scores_zero():
     assert score_candidate("Radiohead", "Kid A", 2000, "album",
                            "Wooden Elephant", "Kid A", 2021, "Album", []) == 0
+
+
+def test_quality_estimates():
+    from app.main import _quality_kbps
+
+    def profile(*names):
+        return {"items": [{"allowed": True, "quality": {"name": n}, "items": []} for n in names]}
+
+    standard = _quality_kbps(profile("MP3-192", "MP3-320", "AAC-256", "OGG Vorbis Q10"))
+    assert standard["typical"] == 320 and standard["high"] == 320 and standard["low"] == 192
+    lossless = _quality_kbps(profile("FLAC", "ALAC", "FLAC 24bit"))
+    assert lossless["typical"] == 900 and lossless["high"] == 2800
+    anyq = _quality_kbps(profile("MP3-128", "MP3-320", "FLAC", "FLAC 24bit"))
+    assert anyq["typical"] == 900 and anyq["low"] == 128 and anyq["high"] == 2800
+    # 56 minutes at Standard ≈ 134 MB (Deadbeat measured 129 MB on disk)
+    assert round(standard["typical"] * 125 * 56 * 60 / 1e6) == 134

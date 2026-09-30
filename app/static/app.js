@@ -96,6 +96,15 @@ function toast(msg, kind = "") {
 
 const fmtTime = (s) => s ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}` : "";
 const fmtFans = (n) => n == null ? "" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M fans` : n >= 1e3 ? `${Math.round(n / 1e3)}K fans` : `${n} fans`;
+function fmtBytes(b) {
+  if (b == null) return "";
+  if (b >= 1e9) return `${(b / 1e9).toFixed(b >= 1e10 ? 0 : 1)} GB`;
+  const mb = b / 1e6;
+  return `${mb >= 100 ? Math.round(mb / 10) * 10 : Math.max(1, Math.round(mb))} MB`;
+}
+// kbps × seconds → bytes
+const sizeFor = (kbps, seconds) => kbps * 1000 / 8 * seconds;
+
 const typeLabel = (t) => ({ album: "Album", ep: "EP", single: "Single", compile: "Compilation" }[t] || "");
 
 // ---------------------------------------------------------------------------
@@ -323,6 +332,31 @@ async function openQualityPicker(kind, id, title) {
     : kind === "search" ? `Search for “${esc(title)}”` : `Add all of ${esc(ctx.artist)}`;
   const action = { album: "Request", search: "Search now", artist: "Add artist" }[kind];
 
+  const est = (p) => ({
+    typical: sizeFor(p.kbps.typical, ctx.seconds),
+    high: sizeFor(p.kbps.high, ctx.seconds),
+    low: sizeFor(p.kbps.low, ctx.seconds),
+  });
+  const sizeLabel = (p) => {
+    if (!ctx.seconds) return "";
+    const e = est(p);
+    const more = e.high > e.typical * 1.3 ? `<div class="m">up to ${fmtBytes(e.high)} if hi-res</div>`
+      : e.low < e.typical * 0.7 ? `<div class="m">${fmtBytes(e.low)}–${fmtBytes(e.typical)}</div>` : "";
+    return `<div class="qsize"><b>${ctx.rough ? "~" : "≈ "}${fmtBytes(e.typical)}</b>${more}</div>`;
+  };
+  const sizeNote = () => {
+    if (!ctx.seconds) return "";
+    const mins = Math.round(ctx.seconds / 60);
+    const what = kind === "artist"
+      ? `${ctx.albums} release${ctx.albums === 1 ? "" : "s"} not in your library yet, about ${mins >= 120 ? Math.round(mins / 60) + " hours" : mins + " min"} of music${ctx.rough ? " (rough: Lidarr may pick a slightly different set)" : ""}`
+      : `${mins} min of music`;
+    const p = q.profiles.find((x) => x.id === selected);
+    const need = p ? est(p).typical : 0;
+    const free = ctx.free_bytes;
+    const tight = free != null && need > free - 5e9;
+    return `<p class="qnote">${what}.${free != null ? ` <span class="${tight ? "qbad" : ""}">${fmtBytes(free)} free on the music disk${tight ? ", which may not be enough" : ""}.</span>` : ""}</p>`;
+  };
+
   const render = () => {
     const warn = ctx.in_library && current && selected !== current
       ? `<p class="qwarn">${esc(ctx.artist)} is already in Lidarr at <b>${esc(nameOf(current))}</b>. Switching to
@@ -334,8 +368,10 @@ async function openQualityPicker(kind, id, title) {
       <div class="qlist">${q.profiles.map((p) => `
         <label class="qopt ${p.id === selected ? "on" : ""}">
           <input type="radio" name="quality" value="${p.id}" ${p.id === selected ? "checked" : ""}>
-          <div><b>${esc(p.name)}</b><div class="m">${esc(p.description)}</div></div>
+          <div style="flex:1;min-width:0"><b>${esc(p.name)}</b><div class="m">${esc(p.description)}</div></div>
+          ${sizeLabel(p)}
         </label>`).join("")}</div>
+      ${sizeNote()}
       ${warn}
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
         <button class="btn ghost" id="q-cancel">Cancel</button>

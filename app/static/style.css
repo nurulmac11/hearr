@@ -214,6 +214,10 @@ h2 small, .sub { color: var(--muted); font-weight: 400; font-size: 14px; }
 .qopt.on { border-color: var(--accent); background: rgba(139, 92, 246, .1); }
 .qopt input { margin-top: 4px; accent-color: var(--accent); }
 .qopt .m { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.qsize { text-align: right; white-space: nowrap; font-size: 14px; }
+.qsize .m { font-size: 12px; }
+.qnote { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
+.qbad { color: var(--bad); font-weight: 600; }
 .qwarn { margin: 14px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(251, 191, 36, .1); color: var(--warn); font-size: 14px; }
 
 /* --- sign in --- */
