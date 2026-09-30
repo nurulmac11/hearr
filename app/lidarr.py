@@ -62,6 +62,19 @@ class Lidarr:
             }
         return self._profiles
 
+    async def quality_profiles(self) -> list[dict]:
+        return await self._req("GET", "/qualityprofile")
+
+    async def set_artist_quality(self, artist_id: int, quality_id: int) -> bool:
+        """Change an existing artist's quality profile. Returns True if it changed."""
+        full = await self._req("GET", f"/artist/{artist_id}")
+        if full.get("qualityProfileId") == quality_id:
+            return False
+        full["qualityProfileId"] = quality_id
+        await self._req("PUT", f"/artist/{artist_id}", json=full)
+        self.invalidate()
+        return True
+
     async def status(self) -> dict:
         return await self._req("GET", "/system/status")
 
@@ -121,7 +134,7 @@ class Lidarr:
     async def artist_lookup(self, term: str) -> list[dict]:
         return await self._req("GET", "/artist/lookup", params={"term": term}) or []
 
-    async def add_album(self, lookup_album: dict) -> dict:
+    async def add_album(self, lookup_album: dict, quality_id: int | None = None) -> dict:
         """Add a looked-up album. Adds its artist too if needed, monitoring nothing else."""
         p = await self.profiles()
         album = dict(lookup_album)
@@ -130,7 +143,7 @@ class Lidarr:
             artist.update(
                 monitored=True,
                 monitorNewItems="none",
-                qualityProfileId=p["quality"],
+                qualityProfileId=quality_id or p["quality"],
                 metadataProfileId=p["metadata"],
                 rootFolderPath=config.LIDARR_ROOT_FOLDER,
                 addOptions={"monitor": "none", "searchForMissingAlbums": False},
@@ -171,14 +184,14 @@ class Lidarr:
         self.invalidate()
         return True
 
-    async def add_artist(self, lookup_artist: dict) -> dict:
+    async def add_artist(self, lookup_artist: dict, quality_id: int | None = None) -> dict:
         """Add an artist with every album monitored and search for all of them."""
         p = await self.profiles()
         artist = dict(lookup_artist)
         artist.update(
             monitored=True,
             monitorNewItems="all",
-            qualityProfileId=p["quality"],
+            qualityProfileId=quality_id or p["quality"],
             metadataProfileId=p["metadata"],
             rootFolderPath=config.LIDARR_ROOT_FOLDER,
             addOptions={"monitor": "all", "searchForMissingAlbums": True},

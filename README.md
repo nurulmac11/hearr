@@ -26,6 +26,10 @@ uses Lidarr's metadata server, so MusicBrainz doesn't need to be reachable.
 3. Otherwise it is added with its artist. The artist is added with nothing else monitored.
    TuneFinder waits for Lidarr's artist refresh to finish, then monitors and searches just that album.
 
+Every request first asks for a quality (the Lidarr quality profiles: Standard, Lossless, Any), with the
+last choice preselected. Lidarr sets quality per artist, so for an artist already in Lidarr the picker
+shows their current profile and warns that changing it applies to all their albums.
+
 "Add whole artist" adds the artist with every album monitored and searches for all of them.
 
 The Lidarr metadata profile named in `LIDARR_METADATA_PROFILE` should allow Albums, EPs and Singles,

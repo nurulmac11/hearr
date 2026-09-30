@@ -384,10 +384,69 @@ async def discover():
 class AlbumRequest(BaseModel):
     deezer_id: int
     foreign_album_id: str | None = None
+    quality_profile_id: int | None = None
 
 
 class ArtistRequest(BaseModel):
     deezer_id: int
+    quality_profile_id: int | None = None
+
+
+LOSSLESS = {"FLAC", "ALAC", "APE", "WavPack", "FLAC 24bit", "ALAC 24bit"}
+
+
+def _allowed_qualities(profile: dict) -> set[str]:
+    names = set()
+    for item in profile["items"]:
+        if item.get("allowed"):
+            names |= {q["quality"]["name"] for q in item.get("items", [])} or {item["quality"]["name"]}
+    return names - {"Unknown"}
+
+
+def _quality_description(profile: dict) -> str:
+    allowed = _allowed_qualities(profile)
+    if allowed and allowed <= LOSSLESS:
+        return "FLAC / ALAC. Best sound, about 3x the size (~350 MB per album). Fewer downloads available."
+    if not allowed & LOSSLESS:
+        return "MP3 / AAC up to 320 kbps. Sounds great, small files (~100 MB per album)."
+    return "Whatever turns up first, lossless or MP3."
+
+
+@app.get("/api/qualities")
+async def qualities():
+    profiles = await lidarr.quality_profiles()
+    default = (await lidarr.profiles())["quality"]
+    def rank(p):  # lossy first, then lossless, then mixed ("Any")
+        allowed = _allowed_qualities(p)
+        return 0 if not allowed & LOSSLESS else 1 if allowed <= LOSSLESS else 2
+    return {
+        "default": default,
+        "profiles": [{"id": p["id"], "name": p["name"], "description": _quality_description(p)}
+                     for p in sorted(profiles, key=rank)],
+    }
+
+
+@app.get("/api/request/context")
+async def request_context(album_id: int | None = None, artist_id: int | None = None):
+    """What the quality picker needs: is the artist already in Lidarr, and at which quality."""
+    if album_id:
+        name = album_out(await dz.album(album_id))["artist"]
+    elif artist_id:
+        name = (await dz.artist(artist_id))["name"]
+    else:
+        raise HTTPException(400, "album_id or artist_id is required")
+    snap = await lidarr.snapshot()
+    existing = snap["artist_names"].get(norm_artist(name))
+    return {"artist": name, "in_library": bool(existing),
+            "quality_profile_id": existing.get("qualityProfileId") if existing else None}
+
+
+async def _checked_quality(qid: int | None) -> int | None:
+    if qid is None:
+        return None
+    if qid not in {p["id"] for p in await lidarr.quality_profiles()}:
+        raise HTTPException(400, "Unknown quality profile.")
+    return qid
 
 
 def _candidate_out(c: dict, score: float) -> dict:
@@ -452,6 +511,7 @@ async def _grab_when_ready(req_id: int, foreign_album_id: str) -> None:
 @app.post("/api/request/album")
 async def request_album(body: AlbumRequest, request: Request):
     who = request.state.user["username"]
+    quality = await _checked_quality(body.quality_profile_id)
     a = await dz.album(body.deezer_id)
     info = album_out(a)
     title, artist_name = info["title"], info["artist"]
@@ -466,6 +526,8 @@ async def request_album(body: AlbumRequest, request: Request):
     if existing and not body.foreign_album_id:
         if lidarr.album_state(existing) == "library":
             return {"status": "library", "message": "Already in your library."}
+        if quality:
+            await lidarr.set_artist_quality(existing["artistId"], quality)
         await lidarr.monitor_and_search(existing["id"])
         record("requested", lidarr_album_id=existing["id"], lidarr_artist_id=existing["artistId"],
                foreign_id=existing["foreignAlbumId"])
@@ -495,13 +557,18 @@ async def request_album(body: AlbumRequest, request: Request):
     if in_lidarr:
         if lidarr.album_state(in_lidarr) == "library":
             return {"status": "library", "message": "Already in your library."}
+        if quality:
+            await lidarr.set_artist_quality(in_lidarr["artistId"], quality)
         await lidarr.monitor_and_search(in_lidarr["id"])
         record("requested", lidarr_album_id=in_lidarr["id"], lidarr_artist_id=in_lidarr["artistId"],
                foreign_id=fid)
         return {"status": "wanted", "message": "Lidarr is searching for it."}
 
+    existing_artist_id = (chosen.get("artist") or {}).get("id")
+    if quality and existing_artist_id:
+        await lidarr.set_artist_quality(existing_artist_id, quality)
     try:
-        added = await lidarr.add_album(chosen)
+        added = await lidarr.add_album(chosen, quality)
     except LidarrError as e:
         artist_id = (chosen.get("artist") or {}).get("id")
         if not artist_id:
@@ -526,11 +593,14 @@ async def request_album(body: AlbumRequest, request: Request):
 @app.post("/api/request/artist")
 async def request_artist(body: ArtistRequest, request: Request):
     who = request.state.user["username"]
+    quality = await _checked_quality(body.quality_profile_id)
     a = await dz.artist(body.deezer_id)
     name = a["name"]
     snap = await lidarr.snapshot()
     existing = snap["artist_names"].get(norm_artist(name))
     if existing:
+        if quality:
+            await lidarr.set_artist_quality(existing["id"], quality)
         await lidarr.monitor_artist_all(existing["id"])
         store.add("artist", a["id"], name, name, a.get("picture_big"), "requested",
                   lidarr_artist_id=existing["id"], foreign_id=existing["foreignArtistId"],
@@ -540,7 +610,7 @@ async def request_artist(body: ArtistRequest, request: Request):
     matches = [c for c in await lidarr.artist_lookup(name) if artist_matches(name, c["artistName"])]
     if not matches:
         return {"status": "not_found", "message": f"Lidarr's database doesn't have {name}."}
-    added = await lidarr.add_artist(matches[0])
+    added = await lidarr.add_artist(matches[0], quality)
     store.add("artist", a["id"], name, name, a.get("picture_big"), "requested",
               lidarr_artist_id=added.get("id"), foreign_id=added.get("foreignArtistId"),
               requested_by=who)

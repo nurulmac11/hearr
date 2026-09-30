@@ -120,7 +120,7 @@ function requestButton(album, cls = "") {
   if (STATE_LABEL[st]) {
     return `<button class="btn ${cls} state-${st}" disabled>${STATE_LABEL[st]}</button>`;
   }
-  return `<button class="btn primary ${cls}" data-request="${album.id}">＋ Request</button>`;
+  return `<button class="btn primary ${cls}" data-request="${album.id}" data-title="${esc(album.title || "")}">＋ Request</button>`;
 }
 
 function pillFor(album) {
@@ -130,20 +130,25 @@ function pillFor(album) {
 }
 
 function refreshButtons(albumId, btn = null) {
-  if (btn && btn.dataset.pick) {
+  if (btn && btn.dataset.restore) {
     btn.disabled = false;
-    btn.textContent = "Request this";
+    btn.textContent = btn.dataset.restore;
   }
-  document.querySelectorAll(`[data-request="${albumId}"], [data-album-state="${albumId}"]`).forEach((btn) => {
+  document.querySelectorAll(`[data-request="${albumId}"], [data-album-state="${albumId}"]`).forEach((old) => {
     const holder = document.createElement("span");
-    holder.innerHTML = requestButton({ id: albumId }, btn.classList.contains("sm") ? "sm" : "");
+    holder.innerHTML = requestButton({ id: albumId, title: old.dataset.title }, old.classList.contains("sm") ? "sm" : "");
     const fresh = holder.firstElementChild;
     fresh.dataset.albumState = albumId;
-    btn.replaceWith(fresh);
+    fresh.dataset.title = old.dataset.title || "";
+    old.replaceWith(fresh);
   });
 }
 
-async function requestAlbum(albumId, foreignAlbumId = null, btn = null) {
+// Quality chosen for an album, kept while the user picks between candidate releases.
+const pendingQuality = new Map();
+
+async function requestAlbum(albumId, foreignAlbumId = null, btn = null, quality = null) {
+  if (quality == null) quality = pendingQuality.get(albumId) ?? null;
   if (btn) {
     btn.disabled = true;
     btn.innerHTML = '<span class="spin"></span> Requesting';
@@ -151,18 +156,20 @@ async function requestAlbum(albumId, foreignAlbumId = null, btn = null) {
   try {
     const r = await api("/request/album", {
       method: "POST",
-      body: JSON.stringify({ deezer_id: albumId, foreign_album_id: foreignAlbumId }),
+      body: JSON.stringify({ deezer_id: albumId, foreign_album_id: foreignAlbumId, quality_profile_id: quality }),
     });
     if (r.status === "confirm") {
+      pendingQuality.set(albumId, quality);
       showCandidates(albumId, r);
-      if (btn) refreshButtons(albumId, btn);
       return;
     }
     if (r.status === "not_found") {
       toast(r.message, "err");
+      closeModal();
       if (btn) refreshButtons(albumId, btn);
       return;
     }
+    pendingQuality.delete(albumId);
     statusOverride.set(albumId, r.status === "library" ? "library" : "requested");
     refreshButtons(albumId);
     toast(r.message, "ok");
@@ -173,18 +180,24 @@ async function requestAlbum(albumId, foreignAlbumId = null, btn = null) {
   }
 }
 
-async function requestArtist(artistId, name, btn) {
-  if (!confirm(`Add every album by ${name} to Lidarr and download them all?`)) return;
+async function requestArtist(artistId, btn, quality) {
   btn.disabled = true;
   btn.innerHTML = '<span class="spin"></span> Adding';
   try {
-    const r = await api("/request/artist", { method: "POST", body: JSON.stringify({ deezer_id: artistId }) });
+    const r = await api("/request/artist", {
+      method: "POST", body: JSON.stringify({ deezer_id: artistId, quality_profile_id: quality }),
+    });
     toast(r.message, r.status === "not_found" ? "err" : "ok");
-    btn.innerHTML = r.status === "not_found" ? "Not found" : "✓ Whole artist requested";
+    closeModal();
+    const main = document.querySelector(`[data-request-artist="${artistId}"]`);
+    if (main) {
+      main.disabled = true;
+      main.textContent = r.status === "not_found" ? "Not found" : "✓ Whole artist requested";
+    }
   } catch (e) {
     toast(e.message, "err");
     btn.disabled = false;
-    btn.textContent = "Add whole artist";
+    btn.textContent = btn.dataset.restore;
   }
 }
 
@@ -198,9 +211,70 @@ function showCandidates(albumId, r) {
           <div><b>${esc(c.title)}</b></div>
           <div class="m">${esc(c.artist)} · ${esc(c.type || "")}${c.secondary.length ? " · " + esc(c.secondary.join(", ")) : ""}${c.year ? " · " + c.year : ""}${c.tracks ? ` · ${c.tracks} tracks` : ""}</div>
         </div>
-        <button class="btn primary sm" data-pick="${esc(c.foreign_album_id)}" data-album="${albumId}">Request this</button>
+        <button class="btn primary sm" data-pick="${esc(c.foreign_album_id)}" data-album="${albumId}" data-restore="Request this">Request this</button>
       </div>`).join("")}
   `);
+}
+
+// ---------------------------------------------------------------------------
+// Quality picker (shown before every request)
+
+let qualityCache = null;
+
+function savedQuality() {
+  try { return Number(localStorage.getItem("tfQuality")) || null; } catch { return null; }
+}
+
+async function openQualityPicker(kind, id, title) {
+  openModal('<div class="loading">Loading…</div>');
+  let q, ctx;
+  try {
+    [q, ctx] = await Promise.all([
+      qualityCache || api("/qualities"),
+      api(`/request/context?${kind === "album" ? "album_id" : "artist_id"}=${id}`),
+    ]);
+    qualityCache = q;
+  } catch (e) {
+    closeModal();
+    toast(e.message, "err");
+    return;
+  }
+  const ids = q.profiles.map((p) => p.id);
+  const current = ctx.quality_profile_id;
+  let selected = [current, savedQuality(), q.default].find((x) => x && ids.includes(x));
+  const nameOf = (pid) => q.profiles.find((p) => p.id === pid)?.name || "";
+  const heading = kind === "album" ? `Request “${esc(title)}”` : `Add all of ${esc(ctx.artist)}`;
+
+  const render = () => {
+    const warn = ctx.in_library && current && selected !== current
+      ? `<p class="qwarn">${esc(ctx.artist)} is already in Lidarr at <b>${esc(nameOf(current))}</b>. Switching to
+         <b>${esc(nameOf(selected))}</b> changes the quality for all of their albums.</p>`
+      : ctx.in_library ? `<p class="sub">${esc(ctx.artist)} is already in Lidarr at <b>${esc(nameOf(current))}</b>.</p>` : "";
+    $("#modal-body").innerHTML = `
+      <h2 style="margin-top:0">${heading}</h2>
+      ${kind === "artist" ? `<p class="sub">Every album will be downloaded.</p>` : ""}
+      <div class="qlist">${q.profiles.map((p) => `
+        <label class="qopt ${p.id === selected ? "on" : ""}">
+          <input type="radio" name="quality" value="${p.id}" ${p.id === selected ? "checked" : ""}>
+          <div><b>${esc(p.name)}</b><div class="m">${esc(p.description)}</div></div>
+        </label>`).join("")}</div>
+      ${warn}
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+        <button class="btn ghost" id="q-cancel">Cancel</button>
+        <button class="btn primary" id="q-go" data-restore="${kind === "album" ? "Request" : "Add artist"}">${kind === "album" ? "Request" : "Add artist"}</button>
+      </div>`;
+    $("#modal-body").querySelectorAll('input[name="quality"]').forEach((r) => r.onchange = () => {
+      selected = Number(r.value);
+      render();
+    });
+    $("#q-cancel").onclick = closeModal;
+    $("#q-go").onclick = (ev) => {
+      try { localStorage.setItem("tfQuality", String(selected)); } catch { /* ignore */ }
+      if (kind === "album") requestAlbum(id, null, ev.currentTarget, selected);
+      else requestArtist(id, ev.currentTarget, selected);
+    };
+  };
+  render();
 }
 
 document.addEventListener("click", (e) => {
@@ -208,7 +282,7 @@ document.addEventListener("click", (e) => {
   if (req) {
     e.preventDefault();
     e.stopPropagation();
-    requestAlbum(Number(req.dataset.request), null, req);
+    openQualityPicker("album", Number(req.dataset.request), req.dataset.title || "");
     return;
   }
   const pick = e.target.closest("[data-pick]");
@@ -218,7 +292,7 @@ document.addEventListener("click", (e) => {
   }
   const art = e.target.closest("[data-request-artist]");
   if (art) {
-    requestArtist(Number(art.dataset.requestArtist), art.dataset.name, art);
+    openQualityPicker("artist", Number(art.dataset.requestArtist), art.dataset.name);
     return;
   }
   const play = e.target.closest("[data-preview]");
