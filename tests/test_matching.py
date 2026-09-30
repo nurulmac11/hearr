@@ -59,3 +59,13 @@ def test_quality_estimates():
     assert anyq["typical"] == 900 and anyq["low"] == 128 and anyq["high"] == 2800
     # 56 minutes at Standard ≈ 134 MB (Deadbeat measured 129 MB on disk)
     assert round(standard["typical"] * 125 * 56 * 60 / 1e6) == 134
+
+
+def test_chart_config():
+    from app.config import _parse_charts
+
+    charts = _parse_charts("tr, global, Chill=1234567, bogus")
+    assert list(charts) == ["tr", "global", "p1234567"]
+    assert charts["tr"]["playlist_id"] == 1116189071
+    assert charts["p1234567"] == {"name": "Chill", "playlist_id": 1234567}
+    assert list(_parse_charts("")) == ["global"]

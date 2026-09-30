@@ -46,7 +46,7 @@ async function startLogin() {
   try {
     const r = await api("/auth/start", { method: "POST" });
     store.set("plexPin", String(r.pin_id));
-    store.set("returnHash", location.hash || "#/charts/tr");
+    store.set("returnHash", location.hash || "#/charts");
     location.href = r.auth_url;
   } catch (e) {
     showLogin(e.message);
@@ -55,7 +55,7 @@ async function startLogin() {
 
 async function finishLogin() {
   const pin = store.get("plexPin");
-  const back = store.get("returnHash") || "#/charts/tr";
+  const back = store.get("returnHash") || "#/charts";
   history.replaceState(null, "", "/" + back);
   if (!pin) return false;
   $("#login").hidden = false;
@@ -307,7 +307,7 @@ async function removeArtist(artistId, name) {
 let qualityCache = null;
 
 function savedQuality() {
-  try { return Number(localStorage.getItem("tfQuality")) || null; } catch { return null; }
+  try { return Number(localStorage.getItem("hearrQuality")) || null; } catch { return null; }
 }
 
 async function openQualityPicker(kind, id, title) {
@@ -383,7 +383,7 @@ async function openQualityPicker(kind, id, title) {
     });
     $("#q-cancel").onclick = closeModal;
     $("#q-go").onclick = (ev) => {
-      try { localStorage.setItem("tfQuality", String(selected)); } catch { /* ignore */ }
+      try { localStorage.setItem("hearrQuality", String(selected)); } catch { /* ignore */ }
       if (kind === "album") requestAlbum(id, null, ev.currentTarget, selected);
       else if (kind === "search") searchNow(id, ev.currentTarget, selected);
       else requestArtist(id, ev.currentTarget, selected);
@@ -538,12 +538,18 @@ const skeletonGrid = (n = 12) => `<div class="grid">${Array.from({ length: n }, 
 // ---------------------------------------------------------------------------
 // Views
 
+let chartList = null;
+
 async function viewCharts(key) {
+  chartList = chartList || await api("/charts");
+  if (!key || !chartList.some((c) => c.key === key)) {
+    location.replace(`#/charts/${chartList[0].key}`);
+    return;
+  }
   const tabs = `
     <h1>Top charts</h1>
     <div class="tabs">
-      <a class="tab ${key === "tr" ? "active" : ""}" href="#/charts/tr">🇹🇷 Turkey</a>
-      <a class="tab ${key === "global" ? "active" : ""}" href="#/charts/global">🌍 Global</a>
+      ${chartList.map((c) => `<a class="tab ${key === c.key ? "active" : ""}" href="#/charts/${esc(c.key)}">${esc(c.name)}</a>`).join("")}
       <a class="tab" href="#/genres">By genre</a>
     </div>`;
   view.innerHTML = tabs + skeletonGrid();
@@ -599,7 +605,7 @@ async function viewDiscover() {
   view.innerHTML = "<h1>Discover</h1><p class='sub'>Finding artists similar to your library…</p>" + skeletonGrid(8);
   const d = await api("/discover");
   if (!d.seeds.length) {
-    view.innerHTML = `<h1>Discover</h1><div class="empty">Add a few artists to Lidarr first. Recommendations are based on your library.<br><br><a class="btn primary" href="#/charts/tr">Browse the charts</a></div>`;
+    view.innerHTML = `<h1>Discover</h1><div class="empty">Add a few artists to Lidarr first. Recommendations are based on your library.<br><br><a class="btn primary" href="#/charts">Browse the charts</a></div>`;
     return;
   }
   view.innerHTML = `<h1>Discover</h1>
@@ -696,7 +702,7 @@ async function viewRequests() {
     known: ["Not monitored", ""], artist: ["Whole artist", "state-requested"], unknown: ["Lidarr offline", ""],
   };
   view.innerHTML = `<h1>Requests</h1>
-    <p class="sub">Everything requested from TuneFinder. <a href="${esc(d.lidarr_url)}" target="_blank" rel="noopener" style="text-decoration:underline">Open Lidarr</a></p>
+    <p class="sub">Everything requested from Hearr. <a href="${esc(d.lidarr_url)}" target="_blank" rel="noopener" style="text-decoration:underline">Open Lidarr</a></p>
     ${d.requests.length ? d.requests.map((r) => {
       const [text, cls] = label[r.status] || [r.status, ""];
       const when = new Date(r.created_at * 1000).toLocaleString();
@@ -719,7 +725,7 @@ async function viewRequests() {
 // Router
 
 const routes = [
-  [/^#\/charts\/(tr|global)$/, (m) => viewCharts(m[1]), "charts"],
+  [/^#\/charts(?:\/([\w-]+))?$/, (m) => viewCharts(m[1]), "charts"],
   [/^#\/genres$/, () => viewGenres(), "genres"],
   [/^#\/genre\/(\d+)(?:\/(.*))?$/, (m) => viewGenre(m[1], decodeURIComponent(m[2] || "")), "genres"],
   [/^#\/new$/, () => viewNew(), "new"],
@@ -731,7 +737,7 @@ const routes = [
 ];
 
 async function route() {
-  const hash = location.hash || "#/charts/tr";
+  const hash = location.hash || "#/charts";
   closeModal();
   for (const [re, fn, nav] of routes) {
     const m = hash.match(re);
@@ -746,7 +752,7 @@ async function route() {
       return;
     }
   }
-  location.hash = "#/charts/tr";
+  location.hash = "#/charts";
 }
 
 window.addEventListener("hashchange", route);

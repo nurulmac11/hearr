@@ -15,7 +15,7 @@ import httpx
 from . import config, store
 
 PLEX_TV = "https://plex.tv/api/v2"
-SESSION_COOKIE = "tf_session"
+SESSION_COOKIE = "hearr_session"
 SESSION_DAYS = 30
 
 
@@ -35,7 +35,7 @@ def client_id() -> str:
 def _headers(token: str | None = None) -> dict:
     h = {
         "Accept": "application/json",
-        "X-Plex-Product": "TuneFinder",
+        "X-Plex-Product": "Hearr",
         "X-Plex-Client-Identifier": client_id(),
     }
     if token:
@@ -52,7 +52,7 @@ async def start_pin(forward_url: str) -> dict:
         "clientID": client_id(),
         "code": pin["code"],
         "forwardUrl": forward_url,
-        "context[device][product]": "TuneFinder",
+        "context[device][product]": "Hearr",
     })
     return {"pin_id": pin["id"], "auth_url": f"https://app.plex.tv/auth#?{query}"}
 

@@ -1,0 +1,23 @@
+services:
+  hearr:
+    image: ghcr.io/OWNER/hearr:latest   # or build from source: `build: .`
+    container_name: hearr
+    restart: unless-stopped
+    ports:
+      - "5070:5070"
+    env_file: .env
+    environment:
+      - LIDARR_URL=http://lidarr:8686
+      - LIDARR_PUBLIC_URL=http://localhost:8686   # link shown in the UI
+      - LIDARR_ROOT_FOLDER=/music                 # a root folder that exists in Lidarr
+      - LIDARR_QUALITY_PROFILE=Standard           # default choice in the quality picker
+      - CHARTS=global,us,uk
+      # - QBITTORRENT_URL=http://qbittorrent:8080
+      # - QBITTORRENT_USER=admin
+      # - COOKIE_SECURE=true                      # when served over HTTPS
+    volumes:
+      - ./hearr-data:/data
+    security_opt:
+      - no-new-privileges
+    cap_drop:
+      - ALL

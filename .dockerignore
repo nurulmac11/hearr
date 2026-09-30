@@ -5,3 +5,8 @@ tests
 __pycache__
 *.pyc
 .env
+docs
+.github
+*.md
+docker-compose*.yml
+.env*

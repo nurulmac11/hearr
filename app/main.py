@@ -18,7 +18,7 @@ from .qbit import Qbit
 from .matching import (AUTO_ACCEPT, SUGGEST_MIN, artist_matches, clean_title, norm_artist, norm_title,
                        score_candidate)
 
-log = logging.getLogger("tunefinder")
+log = logging.getLogger("hearr")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 STATIC = Path(__file__).parent / "static"
@@ -36,10 +36,29 @@ async def lifespan(_app: FastAPI):
     await lidarr.close()
 
 
-app = FastAPI(title="TuneFinder", lifespan=lifespan)
+app = FastAPI(title="Hearr", lifespan=lifespan)
 
 
 PUBLIC_API = ("/api/auth/", "/api/health")
+
+SECURITY_HEADERS = {
+    # Covers come from Deezer's CDN and previews stream from it; everything else is same-origin.
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' https: data:; media-src https:; connect-src 'self'; "
+        "frame-ancestors 'self'; base-uri 'none'; form-action 'self'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for k, v in SECURITY_HEADERS.items():
+        response.headers.setdefault(k, v)
+    return response
 
 
 @app.middleware("http")
@@ -193,7 +212,7 @@ async def auth_check(body: PinCheck, response: Response):
     user = await auth.authorize(token)
     session = auth.create_session(user)
     response.set_cookie(auth.SESSION_COOKIE, session, max_age=auth.SESSION_DAYS * 86400,
-                        httponly=True, samesite="lax")
+                        httponly=True, samesite="lax", secure=config.COOKIE_SECURE)
     log.info("Signed in: %s (owner=%s)", user["username"], user["owner"])
     return {"done": True, "user": {"username": user["username"], "thumb": user["thumb"]}}
 
@@ -227,6 +246,11 @@ async def status():
                 "lidarr_url": config.LIDARR_PUBLIC_URL}
     except LidarrError as e:
         return {"lidarr": False, "error": str(e), "lidarr_url": config.LIDARR_PUBLIC_URL}
+
+
+@app.get("/api/charts")
+async def chart_list():
+    return [{"key": k, "name": v["name"]} for k, v in config.TOP_PLAYLISTS.items()]
 
 
 @app.get("/api/charts/{key}")

@@ -1,4 +1,4 @@
-"""SQLite history of requests made from TuneFinder."""
+"""SQLite history of requests made from Hearr."""
 
 import sqlite3
 import time
@@ -35,7 +35,11 @@ create table if not exists sessions (
 
 def _path():
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return config.DATA_DIR / "tunefinder.db"
+    path = config.DATA_DIR / "hearr.db"
+    legacy = config.DATA_DIR / "tunefinder.db"  # name used before the rename
+    if not path.exists() and legacy.exists():
+        legacy.rename(path)
+    return path
 
 
 @contextmanager

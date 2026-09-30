@@ -45,22 +45,31 @@ class Lidarr:
     # --- setup ----------------------------------------------------------------
 
     async def profiles(self) -> dict:
-        """Resolve the configured profile names to ids once."""
+        """Resolve the configured profile names to ids once, creating the metadata profile if needed."""
         if self._profiles is None:
             quality = await self._req("GET", "/qualityprofile")
-            metadata = await self._req("GET", "/metadataprofile")
-
-            def pick(items, name):
-                for p in items:
-                    if p["name"].lower() == name.lower():
-                        return p["id"]
-                return items[0]["id"]
-
-            self._profiles = {
-                "quality": pick(quality, config.LIDARR_QUALITY_PROFILE),
-                "metadata": pick(metadata, config.LIDARR_METADATA_PROFILE),
-            }
+            q = next((p["id"] for p in quality
+                      if p["name"].lower() == config.LIDARR_QUALITY_PROFILE.lower()), quality[0]["id"])
+            self._profiles = {"quality": q, "metadata": await self._ensure_metadata_profile()}
         return self._profiles
+
+    async def _ensure_metadata_profile(self) -> int:
+        """Chart hits are mostly singles, so requests need a metadata profile that allows
+        Albums, EPs and Singles (studio, official releases). Create it if it doesn't exist."""
+        name = config.LIDARR_METADATA_PROFILE
+        for p in await self._req("GET", "/metadataprofile"):
+            if p["name"].lower() == name.lower():
+                return p["id"]
+        profile = await self._req("GET", "/metadataprofile/schema")
+        profile["name"] = name
+        for t in profile["primaryAlbumTypes"]:
+            t["allowed"] = t["albumType"]["name"] in ("Album", "EP", "Single")
+        for t in profile["secondaryAlbumTypes"]:
+            t["allowed"] = t["albumType"]["name"] == "Studio"
+        for t in profile["releaseStatuses"]:
+            t["allowed"] = t["releaseStatus"]["name"] == "Official"
+        created = await self._req("POST", "/metadataprofile", json=profile)
+        return created["id"]
 
     async def quality_profiles(self) -> list[dict]:
         return await self._req("GET", "/qualityprofile")
@@ -187,7 +196,7 @@ class Lidarr:
         self.invalidate()
 
     async def ensure_profile_allows(self, artist: dict) -> bool:
-        """Switch an existing artist to the TuneFinder metadata profile and refresh it.
+        """Switch an existing artist to the configured metadata profile and refresh it.
 
         Returns True if a refresh was started (the album may appear shortly after).
         """
