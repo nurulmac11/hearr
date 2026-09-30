@@ -1,6 +1,6 @@
 services:
   hearr:
-    image: ghcr.io/OWNER/hearr:latest   # or build from source: `build: .`
+    image: ghcr.io/nurulmac11/hearr:latest   # or build from source: `build: .`
     container_name: hearr
     restart: unless-stopped
     ports:

@@ -65,8 +65,8 @@ picker applies to all of their albums. The picker warns you about this.
 
 ```sh
 mkdir hearr && cd hearr
-curl -L -o docker-compose.yml https://raw.githubusercontent.com/OWNER/hearr/main/docker-compose.example.yml
-curl -L -o .env https://raw.githubusercontent.com/OWNER/hearr/main/.env.example
+curl -L -o docker-compose.yml https://raw.githubusercontent.com/nurulmac11/hearr/main/docker-compose.example.yml
+curl -L -o .env https://raw.githubusercontent.com/nurulmac11/hearr/main/.env.example
 # fill in .env, adjust the environment section, then:
 docker compose up -d
 ```
