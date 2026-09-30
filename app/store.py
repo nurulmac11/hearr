@@ -22,6 +22,14 @@ create table if not exists requests (
     created_at real not null
 );
 create index if not exists requests_deezer on requests(kind, deezer_id);
+create table if not exists sessions (
+    token text primary key,
+    plex_id integer not null,
+    username text not null,
+    thumb text,
+    owner integer not null default 0,
+    expires_at real not null
+);
 """
 
 
@@ -44,18 +52,23 @@ def db():
 def init() -> None:
     with db() as c:
         c.executescript(SCHEMA)
+        cols = {r["name"] for r in c.execute("pragma table_info(requests)")}
+        if "requested_by" not in cols:
+            c.execute("alter table requests add column requested_by text")
+        c.execute("delete from sessions where expires_at < ?", (time.time(),))
 
 
 def add(kind: str, deezer_id: int, title: str, artist: str, cover: str | None, state: str,
         lidarr_album_id: int | None = None, lidarr_artist_id: int | None = None,
-        foreign_id: str | None = None, message: str | None = None) -> int:
+        foreign_id: str | None = None, message: str | None = None,
+        requested_by: str | None = None) -> int:
     with db() as c:
         cur = c.execute(
             "insert into requests(kind, deezer_id, title, artist, cover, lidarr_album_id,"
-            " lidarr_artist_id, foreign_id, state, message, created_at)"
-            " values (?,?,?,?,?,?,?,?,?,?,?)",
+            " lidarr_artist_id, foreign_id, state, message, created_at, requested_by)"
+            " values (?,?,?,?,?,?,?,?,?,?,?,?)",
             (kind, deezer_id, title, artist, cover, lidarr_album_id, lidarr_artist_id,
-             foreign_id, state, message, time.time()),
+             foreign_id, state, message, time.time(), requested_by),
         )
         return cur.lastrowid
 
@@ -81,3 +94,25 @@ def latest_album_requests() -> dict[int, dict]:
         for r in c.execute("select * from requests where kind = 'album' order by created_at"):
             out[r["deezer_id"]] = dict(r)
     return out
+
+
+def add_session(token: str, user: dict, expires_at: float) -> None:
+    with db() as c:
+        c.execute(
+            "insert into sessions(token, plex_id, username, thumb, owner, expires_at)"
+            " values (?,?,?,?,?,?)",
+            (token, user["plex_id"], user["username"], user.get("thumb"), int(user["owner"]),
+             expires_at),
+        )
+
+
+def get_session(token: str) -> dict | None:
+    with db() as c:
+        row = c.execute("select * from sessions where token = ? and expires_at > ?",
+                        (token, time.time())).fetchone()
+        return dict(row) if row else None
+
+
+def delete_session(token: str) -> None:
+    with db() as c:
+        c.execute("delete from sessions where token = ?", (token,))

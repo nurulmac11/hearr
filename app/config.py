@@ -24,3 +24,6 @@ TOP_PLAYLISTS = {
 
 # How far back "new releases from your artists" looks.
 NEW_RELEASE_DAYS = int(_env("NEW_RELEASE_DAYS", "120"))
+
+# Sign in with Plex: users must have access to this Plex server (its machine identifier).
+PLEX_SERVER_ID = _env("PLEX_SERVER_ID")

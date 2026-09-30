@@ -204,6 +204,24 @@ h2 small, .sub { color: var(--muted); font-weight: 400; font-size: 14px; }
 .player .grow { flex: 1; min-width: 0; }
 .player progress { width: 100%; height: 4px; accent-color: var(--accent); }
 
+/* --- sign in --- */
+body.locked .nav, body.locked main { visibility: hidden; }
+.login { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; }
+.login[hidden] { display: none; }
+.login-card {
+  width: min(400px, 100%); text-align: center; padding: 36px 28px; border-radius: 22px;
+  background: rgba(20, 22, 28, .85); border: 1px solid var(--line); backdrop-filter: blur(12px);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+.login-card h1 { margin: 6px 0 0; }
+.btn.plex { margin-top: 12px; padding: 12px 24px; font-size: 15px; background: #e5a00d; color: #1f1f1f; }
+.btn.plex:hover { filter: brightness(1.08); }
+.login-msg { color: var(--bad); min-height: 1.2em; margin: 4px 0 0; font-size: 14px; }
+.me { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text); font-size: 13px; }
+.me img { width: 24px; height: 24px; border-radius: 50%; }
+.me span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linkish { background: none; border: 0; padding: 0; color: var(--muted); font-size: 12px; text-decoration: underline; }
+
 /* --- phone --- */
 @media (max-width: 760px) {
   body { flex-direction: column; }

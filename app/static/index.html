@@ -7,7 +7,7 @@
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body class="locked">
   <aside class="nav">
     <a class="brand" href="#/charts/tr">
       <img src="/static/icon.svg" alt="" width="28" height="28">
@@ -36,6 +36,15 @@
     <div class="modal-card" role="dialog" aria-modal="true">
       <button class="modal-close" aria-label="Close">×</button>
       <div id="modal-body"></div>
+    </div>
+  </div>
+  <div id="login" class="login" hidden>
+    <div class="login-card">
+      <img src="/static/icon.svg" alt="" width="64" height="64">
+      <h1>TuneFinder</h1>
+      <p class="sub">Discover music and send it to your library.<br>Sign in with a Plex account that has access to this server.</p>
+      <button id="login-btn" class="btn plex">Sign in with Plex</button>
+      <p id="login-msg" class="login-msg"></p>
     </div>
   </div>
   <div id="toasts" class="toasts" aria-live="polite"></div>

@@ -31,6 +31,13 @@ uses Lidarr's metadata server, so MusicBrainz doesn't need to be reachable.
 The Lidarr metadata profile named in `LIDARR_METADATA_PROFILE` should allow Albums, EPs and Singles,
 otherwise chart singles can't be requested.
 
+## Sign in
+
+Everything except `/api/health` and `/api/auth/*` needs a session. Users sign in with Plex (PIN flow
+via app.plex.tv). An account is allowed only if Plex lists the server named in `PLEX_SERVER_ID`
+among its resources, which means the owner and anyone the server is shared with. Sessions last
+30 days, are stored in SQLite and use an HttpOnly cookie. Requests record who made them.
+
 ## Configuration
 
 | Variable | Default | |
@@ -41,6 +48,7 @@ otherwise chart singles can't be requested.
 | `LIDARR_ROOT_FOLDER` | `/data/Music` | Lidarr root folder for new artists |
 | `LIDARR_QUALITY_PROFILE` | `Standard` | Quality profile name |
 | `LIDARR_METADATA_PROFILE` | `TuneFinder` | Metadata profile name |
+| `PLEX_SERVER_ID` | | Required. The Plex server's machine identifier (`/identity` on the server) |
 | `NEW_RELEASE_DAYS` | `120` | How far back "New" looks |
 | `DATA_DIR` | `/data` | Where the request history (SQLite) is stored |
 

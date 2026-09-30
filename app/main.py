@@ -6,12 +6,12 @@ from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, store
+from . import auth, config, store
 from .deezer import Deezer, DeezerError
 from .lidarr import Lidarr, LidarrError
 from .matching import (AUTO_ACCEPT, SUGGEST_MIN, artist_matches, clean_title, norm_artist, norm_title,
@@ -35,6 +35,26 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="TuneFinder", lifespan=lifespan)
+
+
+PUBLIC_API = ("/api/auth/", "/api/health")
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith(PUBLIC_API):
+        token = request.cookies.get(auth.SESSION_COOKIE)
+        user = store.get_session(token) if token else None
+        if not user:
+            return JSONResponse(status_code=401, content={"detail": "Sign in with Plex first."})
+        request.state.user = user
+    return await call_next(request)
+
+
+@app.exception_handler(auth.AuthError)
+async def _auth_error(_req, exc):
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 @app.exception_handler(DeezerError)
@@ -141,6 +161,57 @@ def _unique_artists_from_tracks(raw: list[dict]) -> list[dict]:
             seen.add(ar["id"])
             out.append(artist_out(ar))
     return out
+
+
+# --- API: sign in ------------------------------------------------------------
+
+class PinCheck(BaseModel):
+    pin_id: int
+
+
+@app.get("/api/health")
+async def health():
+    return {"ok": True}
+
+
+@app.post("/api/auth/start")
+async def auth_start(request: Request):
+    if not config.PLEX_SERVER_ID:
+        raise HTTPException(500, "PLEX_SERVER_ID isn't configured.")
+    base = str(request.base_url).rstrip("/")
+    pin = await auth.start_pin(f"{base}/?plexauth=1")
+    return pin
+
+
+@app.post("/api/auth/check")
+async def auth_check(body: PinCheck, response: Response):
+    token = await auth.check_pin(body.pin_id)
+    if not token:
+        return {"done": False}
+    user = await auth.authorize(token)
+    session = auth.create_session(user)
+    response.set_cookie(auth.SESSION_COOKIE, session, max_age=auth.SESSION_DAYS * 86400,
+                        httponly=True, samesite="lax")
+    log.info("Signed in: %s (owner=%s)", user["username"], user["owner"])
+    return {"done": True, "user": {"username": user["username"], "thumb": user["thumb"]}}
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    user = store.get_session(token) if token else None
+    if not user:
+        raise HTTPException(401, "Not signed in.")
+    return {"username": user["username"], "thumb": user["thumb"], "owner": bool(user["owner"])}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    token = request.cookies.get(auth.SESSION_COOKIE)
+    if token:
+        store.delete_session(token)
+    response.delete_cookie(auth.SESSION_COOKIE)
+    return {"ok": True}
 
 
 # --- API: browsing ------------------------------------------------------------
@@ -379,14 +450,16 @@ async def _grab_when_ready(req_id: int, foreign_album_id: str) -> None:
 
 
 @app.post("/api/request/album")
-async def request_album(body: AlbumRequest):
+async def request_album(body: AlbumRequest, request: Request):
+    who = request.state.user["username"]
     a = await dz.album(body.deezer_id)
     info = album_out(a)
     title, artist_name = info["title"], info["artist"]
     snap = await lidarr.snapshot()
 
     def record(state, **kw):
-        return store.add("album", info["id"], title, artist_name, info["cover"], state, **kw)
+        return store.add("album", info["id"], title, artist_name, info["cover"], state,
+                         requested_by=who, **kw)
 
     # Already in Lidarr under the same names: just monitor + search.
     existing = snap["album_index"].get((norm_artist(artist_name), norm_title(title)))
@@ -451,7 +524,8 @@ async def request_album(body: AlbumRequest):
 
 
 @app.post("/api/request/artist")
-async def request_artist(body: ArtistRequest):
+async def request_artist(body: ArtistRequest, request: Request):
+    who = request.state.user["username"]
     a = await dz.artist(body.deezer_id)
     name = a["name"]
     snap = await lidarr.snapshot()
@@ -459,7 +533,8 @@ async def request_artist(body: ArtistRequest):
     if existing:
         await lidarr.monitor_artist_all(existing["id"])
         store.add("artist", a["id"], name, name, a.get("picture_big"), "requested",
-                  lidarr_artist_id=existing["id"], foreign_id=existing["foreignArtistId"])
+                  lidarr_artist_id=existing["id"], foreign_id=existing["foreignArtistId"],
+                  requested_by=who)
         return {"status": "wanted", "message": f"Monitoring all of {name} in Lidarr. Searching now."}
 
     matches = [c for c in await lidarr.artist_lookup(name) if artist_matches(name, c["artistName"])]
@@ -467,7 +542,8 @@ async def request_artist(body: ArtistRequest):
         return {"status": "not_found", "message": f"Lidarr's database doesn't have {name}."}
     added = await lidarr.add_artist(matches[0])
     store.add("artist", a["id"], name, name, a.get("picture_big"), "requested",
-              lidarr_artist_id=added.get("id"), foreign_id=added.get("foreignArtistId"))
+              lidarr_artist_id=added.get("id"), foreign_id=added.get("foreignArtistId"),
+              requested_by=who)
     return {"status": "wanted", "message": f"Added {name} to Lidarr with all albums. Searching now."}
 
 

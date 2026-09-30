@@ -14,8 +14,76 @@ async function api(path, opts = {}) {
   });
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
+  if (res.status === 401 && !path.startsWith("/auth/")) {
+    showLogin();
+    throw new Error("Sign in with Plex first.");
+  }
   if (!res.ok) throw new Error((data && data.detail) || `Request failed (${res.status})`);
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// Sign in with Plex
+
+const store = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
+  set: (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* ignore */ } },
+  del: (k) => { try { sessionStorage.removeItem(k); } catch { /* ignore */ } },
+};
+
+function showLogin(message = "") {
+  document.body.classList.add("locked");
+  $("#login").hidden = false;
+  $("#login-msg").textContent = message;
+  $("#login-btn").disabled = false;
+  $("#login-btn").textContent = "Sign in with Plex";
+}
+
+async function startLogin() {
+  const btn = $("#login-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Opening Plex…';
+  try {
+    const r = await api("/auth/start", { method: "POST" });
+    store.set("plexPin", String(r.pin_id));
+    store.set("returnHash", location.hash || "#/charts/tr");
+    location.href = r.auth_url;
+  } catch (e) {
+    showLogin(e.message);
+  }
+}
+
+async function finishLogin() {
+  const pin = store.get("plexPin");
+  const back = store.get("returnHash") || "#/charts/tr";
+  history.replaceState(null, "", "/" + back);
+  if (!pin) return false;
+  $("#login").hidden = false;
+  document.body.classList.add("locked");
+  $("#login-btn").disabled = true;
+  $("#login-btn").innerHTML = '<span class="spin"></span> Signing in…';
+  for (let i = 0; i < 20; i++) {
+    try {
+      const r = await api("/auth/check", { method: "POST", body: JSON.stringify({ pin_id: Number(pin) }) });
+      if (r.done) {
+        store.del("plexPin");
+        return true;
+      }
+    } catch (e) {
+      store.del("plexPin");
+      showLogin(e.message);
+      return false;
+    }
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+  store.del("plexPin");
+  showLogin("Plex sign-in didn't finish. Try again.");
+  return false;
+}
+
+async function logout() {
+  await api("/auth/logout", { method: "POST" }).catch(() => {});
+  location.reload();
 }
 
 function toast(msg, kind = "") {
@@ -428,7 +496,7 @@ async function viewRequests() {
       <div class="req">
         <a href="${link}">${r.cover ? `<img src="${esc(r.cover)}" alt="">` : "<span></span>"}</a>
         <div style="min-width:0">
-          <div class="kind">${r.kind === "album" ? "Album" : "Artist"} · ${esc(when)}</div>
+          <div class="kind">${r.kind === "album" ? "Album" : "Artist"} · ${esc(when)}${r.requested_by ? ` · ${esc(r.requested_by)}` : ""}</div>
           <div><b><a href="${link}">${esc(r.title)}</a></b>${r.kind === "album" ? ` <span class="sub">by ${esc(r.artist)}</span>` : ""}</div>
           ${r.message ? `<div class="sub">${esc(r.message)}</div>` : ""}
           ${r.progress != null && r.status !== "library" ? `<div class="bar"><i style="width:${Math.min(100, r.progress)}%"></i></div>` : ""}
@@ -480,17 +548,37 @@ $("#search-form").addEventListener("submit", (e) => {
   if (q) location.hash = `#/search/${encodeURIComponent(q)}`;
 });
 
-async function loadStatus() {
+async function loadStatus(user) {
   const el = $("#lidarr-status");
+  const who = user ? `<div class="me">${user.thumb ? `<img src="${esc(user.thumb)}" alt="">` : ""}<span>${esc(user.username)}</span>
+    <button class="linkish" id="logout">Sign out</button></div>` : "";
   try {
     const s = await api("/status");
-    el.innerHTML = s.lidarr
+    el.innerHTML = who + (s.lidarr
       ? `<span class="dot" style="background:var(--ok)"></span>Lidarr ${esc(s.version)}`
-      : `<span class="dot" style="background:var(--bad)"></span>Lidarr offline`;
+      : `<span class="dot" style="background:var(--bad)"></span>Lidarr offline`);
   } catch {
-    el.innerHTML = `<span class="dot" style="background:var(--bad)"></span>Server offline`;
+    el.innerHTML = who + `<span class="dot" style="background:var(--bad)"></span>Server offline`;
   }
+  const out = $("#logout");
+  if (out) out.onclick = logout;
 }
 
-loadStatus();
-route();
+$("#login-btn").addEventListener("click", startLogin);
+
+(async function boot() {
+  if (new URLSearchParams(location.search).has("plexauth")) {
+    await finishLogin();
+  }
+  let user = null;
+  try {
+    user = await api("/auth/me");
+  } catch {
+    showLogin();
+    return;
+  }
+  document.body.classList.remove("locked");
+  $("#login").hidden = true;
+  loadStatus(user);
+  route();
+})();
