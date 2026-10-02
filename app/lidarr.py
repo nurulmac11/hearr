@@ -127,6 +127,7 @@ class Lidarr:
                 "albums": albums,
                 "album_index": album_index,
                 "album_by_foreign": {al["foreignAlbumId"]: al for al in albums},
+                "album_by_id": {al["id"]: al for al in albums},
                 "queued": queued,
             }
             self._snapshot_at = time.monotonic()

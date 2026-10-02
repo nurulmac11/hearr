@@ -152,9 +152,12 @@ async def annotate(albums: list[dict] = (), artists: list[dict] = ()) -> None:
         if snap is None:
             a["status"] = "unknown"
             continue
-        al = snap["album_index"].get((norm_artist(a["artist"]), norm_title(a["title"])))
-        state = lidarr.album_state(al)
         req = requests.get(a["id"])
+        # Prefer the album we already matched on request: Lidarr's artist name can differ
+        # from Deezer's (e.g. "Ye" vs "Kanye West"), which breaks the name lookup.
+        al = (req and req["lidarr_album_id"] and snap["album_by_id"].get(req["lidarr_album_id"])) \
+            or snap["album_index"].get((norm_artist(a["artist"]), norm_title(a["title"])))
+        state = lidarr.album_state(al)
         if state in ("none", "known") and req and req["state"] in ("requested", "refreshing"):
             state = "requested"
         a["status"] = state
