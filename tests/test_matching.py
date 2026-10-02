@@ -69,3 +69,13 @@ def test_chart_config():
     assert charts["tr"]["playlist_id"] == 1116189071
     assert charts["p1234567"] == {"name": "Chill", "playlist_id": 1234567}
     assert list(_parse_charts("")) == ["global"]
+
+
+def test_renamed_artist_matches_via_disambiguation():
+    assert artist_matches("Kanye West", "Ye", "formerly Kanye West")
+    assert not artist_matches("Kanye West", "Ye", "French rapper")
+    assert not artist_matches("Kanye West", "Ye")
+    s = score_candidate("Kanye West", "My Beautiful Dark Twisted Fantasy", 2010, "album",
+                        "Ye", "My Beautiful Dark Twisted Fantasy", 2010, "Album", [],
+                        "formerly Kanye West")
+    assert s >= AUTO_ACCEPT

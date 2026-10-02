@@ -567,23 +567,32 @@ def _candidate_out(c: dict, score: float) -> dict:
     }
 
 
-async def _find_candidates(artist_name: str, title: str, year, rtype) -> list[tuple[float, dict]]:
+async def _find_candidates(artist_name: str, title: str, year,
+                           rtype) -> tuple[list[tuple[float, dict]], list[tuple[float, dict]], list[str]]:
+    """Returns (matches with score > 0, every lookup result scored, terms searched)."""
     terms = [f"{artist_name} {clean_title(title)}", clean_title(title)]
+    searched = []
     seen: dict[str, dict] = {}
     for term in terms:
+        searched.append(term)
         for c in await lidarr.album_lookup(term):
             seen.setdefault(c["foreignAlbumId"], c)
-        if any(artist_matches(artist_name, c["artist"]["artistName"]) for c in seen.values()):
+        if any(artist_matches(artist_name, c["artist"]["artistName"], c["artist"].get("disambiguation"))
+               for c in seen.values()):
             break
-    scored = []
+    everything = []
     for c in seen.values():
         secondary = [s["name"] if isinstance(s, dict) else s for s in c.get("secondaryTypes", [])]
         s = score_candidate(artist_name, title, year, rtype, c["artist"]["artistName"], c["title"],
-                            _year(c.get("releaseDate")), c.get("albumType"), secondary)
-        if s > 0:
-            scored.append((s, c))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return scored
+                            _year(c.get("releaseDate")), c.get("albumType"), secondary,
+                            c["artist"].get("disambiguation"))
+        everything.append((s, c))
+    everything.sort(key=lambda x: x[0], reverse=True)
+    log.info("Lidarr lookup for %r - %r (%s, %s): searched %s, %d results; top: %s",
+             artist_name, title, rtype, year, searched, len(everything),
+             "; ".join(f"{c['artist']['artistName']} - {c['title']} ({c.get('albumType')}, "
+                       f"{_year(c.get('releaseDate'))}) = {s:.2f}" for s, c in everything[:5]) or "none")
+    return [(s, c) for s, c in everything if s > 0], everything, searched
 
 
 def _spawn(coro) -> None:
@@ -638,7 +647,7 @@ async def request_album(body: AlbumRequest, request: Request):
                foreign_id=existing["foreignAlbumId"])
         return {"status": "wanted", "message": "Lidarr is searching for it."}
 
-    scored = await _find_candidates(artist_name, title, info["year"], info["type"])
+    scored, everything, searched = await _find_candidates(artist_name, title, info["year"], info["type"])
     if body.foreign_album_id:
         chosen = next((c for _, c in scored if c["foreignAlbumId"] == body.foreign_album_id), None)
         if not chosen:
@@ -653,9 +662,15 @@ async def request_album(body: AlbumRequest, request: Request):
                 "message": "Not sure which release this is. Pick the right one.",
                 "candidates": [_candidate_out(c, s) for s, c in scored[:6] if s >= SUGGEST_MIN]}
     else:
-        return {"status": "not_found",
-                "message": "Lidarr's database doesn't have this release yet. Brand-new singles can "
-                           "take a while to appear. You can add the whole artist instead."}
+        if everything:
+            message = (f"No confident match in Lidarr for “{title}” by {artist_name}. "
+                       "These were the closest results. Request one only if it's really the same release.")
+        else:
+            message = (f"Lidarr's search returned nothing for “{title}” by {artist_name}, so its database "
+                       "(MusicBrainz) probably doesn't have this release yet. Brand-new singles can take "
+                       "a while to appear. You can add the whole artist instead.")
+        return {"status": "not_found", "message": message, "searched": searched,
+                "candidates": [_candidate_out(c, s) for s, c in everything[:6]]}
 
     fid = chosen["foreignAlbumId"]
     in_lidarr = snap["album_by_foreign"].get(fid)
@@ -712,9 +727,21 @@ async def request_artist(body: ArtistRequest, request: Request):
                   requested_by=who)
         return {"status": "wanted", "message": f"Monitoring all of {name} in Lidarr. Searching now."}
 
-    matches = [c for c in await lidarr.artist_lookup(name) if artist_matches(name, c["artistName"])]
+    matches = [c for c in await lidarr.artist_lookup(name)
+               if artist_matches(name, c["artistName"], c.get("disambiguation"))]
     if not matches:
         return {"status": "not_found", "message": f"Lidarr's database doesn't have {name}."}
+    # Renamed artists (e.g. Kanye West → Ye) can already be in Lidarr under the new name.
+    in_lidarr = next((x for x in snap["artists"] if x["foreignArtistId"] == matches[0]["foreignArtistId"]), None)
+    if in_lidarr:
+        if quality:
+            await lidarr.set_artist_quality(in_lidarr["id"], quality)
+        await lidarr.monitor_artist_all(in_lidarr["id"])
+        store.add("artist", a["id"], name, name, a.get("picture_big"), "requested",
+                  lidarr_artist_id=in_lidarr["id"], foreign_id=in_lidarr["foreignArtistId"],
+                  requested_by=who)
+        return {"status": "wanted",
+                "message": f"Monitoring all of {in_lidarr['artistName']} in Lidarr. Searching now."}
     added = await lidarr.add_artist(matches[0], quality)
     store.add("artist", a["id"], name, name, a.get("picture_big"), "requested",
               lidarr_artist_id=added.get("id"), foreign_id=added.get("foreignArtistId"),

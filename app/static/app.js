@@ -176,8 +176,8 @@ async function requestAlbum(albumId, foreignAlbumId = null, btn = null, quality 
       return;
     }
     if (r.status === "not_found") {
-      toast(r.message, "err");
-      closeModal();
+      pendingQuality.set(albumId, quality);
+      showCandidates(albumId, r, "Not found in Lidarr");
       if (btn) refreshButtons(albumId, btn);
       return;
     }
@@ -213,15 +213,17 @@ async function requestArtist(artistId, btn, quality) {
   }
 }
 
-function showCandidates(albumId, r) {
+function showCandidates(albumId, r, heading = "Which release?") {
+  const cands = r.candidates || [];
   openModal(`
-    <h2 style="margin-top:0">Which release?</h2>
+    <h2 style="margin-top:0">${esc(heading)}</h2>
     <p class="sub">${esc(r.message)}</p>
-    ${r.candidates.map((c) => `
+    ${r.searched ? `<p class="sub" style="font-size:13px">Searched Lidarr for: ${r.searched.map((t) => `<code>${esc(t)}</code>`).join(", ")}</p>` : ""}
+    ${cands.map((c) => `
       <div class="cand">
         <div>
           <div><b>${esc(c.title)}</b></div>
-          <div class="m">${esc(c.artist)} · ${esc(c.type || "")}${c.secondary.length ? " · " + esc(c.secondary.join(", ")) : ""}${c.year ? " · " + c.year : ""}${c.tracks ? ` · ${c.tracks} tracks` : ""}</div>
+          <div class="m">${esc(c.artist)} · ${esc(c.type || "")}${c.secondary.length ? " · " + esc(c.secondary.join(", ")) : ""}${c.year ? " · " + c.year : ""}${c.tracks ? ` · ${c.tracks} tracks` : ""}${r.status === "not_found" ? ` · match ${Math.round(c.score * 100)}%` : ""}</div>
         </div>
         <button class="btn primary sm" data-pick="${esc(c.foreign_album_id)}" data-album="${albumId}" data-restore="Request this">Request this</button>
       </div>`).join("")}

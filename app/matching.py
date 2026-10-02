@@ -51,11 +51,19 @@ def norm_artist(name: str) -> str:
     return n[4:] if n.startswith("the ") else n
 
 
-def artist_matches(a: str, b: str) -> bool:
+_FORMER_NAME = re.compile(r"\b(?:formerly|previously|aka|a k a|also known as)\s+(?:the\s+)?(.+)")
+
+
+def artist_matches(a: str, b: str, b_disambiguation: str | None = None) -> bool:
+    """True if a and b name the same artist. MusicBrainz keeps renamed artists under the new
+    name with a disambiguation like "formerly Kanye West", so that counts as a match too."""
     na, nb = norm_artist(a), norm_artist(b)
     if not na or not nb:
         return False
-    return na == nb or SequenceMatcher(None, na, nb).ratio() >= 0.92
+    if na == nb or SequenceMatcher(None, na, nb).ratio() >= 0.92:
+        return True
+    m = _FORMER_NAME.search(fold(b_disambiguation))
+    return bool(m) and norm_artist(m.group(1)) == na
 
 
 def title_similarity(a: str, b: str) -> float:
@@ -72,9 +80,10 @@ DEEZER_TO_LIDARR_TYPE = {"album": "Album", "ep": "EP", "single": "Single", "comp
 
 def score_candidate(dz_artist: str, dz_title: str, dz_year: int | None, dz_type: str | None,
                     cand_artist: str, cand_title: str, cand_year: int | None,
-                    cand_type: str | None, cand_secondary: list[str]) -> float:
+                    cand_type: str | None, cand_secondary: list[str],
+                    cand_disambiguation: str | None = None) -> float:
     """0..1 confidence that a Lidarr lookup result is the Deezer release."""
-    if not artist_matches(dz_artist, cand_artist):
+    if not artist_matches(dz_artist, cand_artist, cand_disambiguation):
         return 0.0
     score = title_similarity(dz_title, cand_title)
     if dz_year and cand_year:
