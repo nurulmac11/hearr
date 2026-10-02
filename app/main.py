@@ -814,7 +814,11 @@ def _removed_message(what: str, res: dict, torrents: list[str], artist_removed: 
 async def remove_album(body: DeezerRef, request: Request):
     _require_owner(request)
     info, al = await _lidarr_album_for(body.deezer_id)
+    forgotten = store.delete_requests("album", body.deezer_id)
     if not al:
+        if forgotten:
+            return {"status": "none", "artist_removed": False,
+                    "message": f"“{info['title']}” wasn't in Lidarr. Removed it from Hearr."}
         raise HTTPException(404, "This album isn't in Lidarr.")
     hashes = await lidarr.download_ids(album_id=al["id"])
     res = await lidarr.remove_album(al["id"])
@@ -835,7 +839,10 @@ async def remove_artist(body: DeezerRef, request: Request):
     a = await dz.artist(body.deezer_id)
     snap = await lidarr.snapshot()
     existing = snap["artist_names"].get(norm_artist(a["name"]))
+    forgotten = store.delete_requests("artist", body.deezer_id)
     if not existing:
+        if forgotten:
+            return {"status": "none", "message": f"{a['name']} wasn't in Lidarr. Removed them from Hearr."}
         raise HTTPException(404, f"{a['name']} isn't in Lidarr.")
     hashes = await lidarr.download_ids(artist_id=existing["id"])
     artist_album_ids = {al["id"] for al in snap["albums"] if al["artistId"] == existing["id"]}

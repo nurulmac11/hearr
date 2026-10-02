@@ -85,6 +85,12 @@ def update(req_id: int, **fields) -> None:
         c.execute(f"update requests set {cols} where id = ?", (*fields.values(), req_id))
 
 
+def delete_requests(kind: str, deezer_id: int) -> int:
+    with db() as c:
+        return c.execute("delete from requests where kind = ? and deezer_id = ?",
+                         (kind, deezer_id)).rowcount
+
+
 def all_requests(limit: int = 200) -> list[dict]:
     with db() as c:
         rows = c.execute("select * from requests order by created_at desc limit ?", (limit,))
