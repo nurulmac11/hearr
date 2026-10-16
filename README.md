@@ -19,7 +19,7 @@
 - **Charts:** Deezer's Top 100 for the countries you choose, shown as albums & singles or as a song list.
 - **Genres:** top albums, artists and songs per genre.
 - **New:** recent releases from artists already in your Lidarr library, plus Deezer's editorial picks.
-- **Discover:** artists similar to your library, ranked by how many of your artists they're related to.
+- **Discover:** albums, songs and artists similar to your library. Artists are ranked by how many of your artists they're related to; the albums and songs come from the best of them and skip what you already own. Requesting a song adds its whole album.
 - **Search, artist and album pages:** full discographies (albums, EPs, singles) and 30-second previews.
 - **One-click requests:** pick a quality (Lidarr's quality profiles) and see the estimated download size and free disk space before you request.
 - **Library status everywhere:** *In library*, *Downloading*, *Searching* or *Search now* for albums Lidarr wants but isn't looking for.

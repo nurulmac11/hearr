@@ -502,6 +502,7 @@ function albumCard(a, { showArtist = true, showType = false } = {}) {
       </a>
       <div class="t" title="${esc(a.title)}">${esc(a.title)}</div>
       <div class="s">${sub}</div>
+      ${a.because && a.because.length ? `<div class="because">Like ${esc(a.because.join(", "))}</div>` : ""}
     </div>`;
 }
 
@@ -604,7 +605,7 @@ async function viewNew() {
 }
 
 async function viewDiscover() {
-  view.innerHTML = "<h1>Discover</h1><p class='sub'>Finding artists similar to your library…</p>" + skeletonGrid(8);
+  view.innerHTML = "<h1>Discover</h1><p class='sub'>Finding albums, songs and artists similar to your library…</p>" + skeletonGrid(8);
   const d = await api("/discover");
   if (!d.seeds.length) {
     view.innerHTML = `<h1>Discover</h1><div class="empty">Add a few artists to Lidarr first. Recommendations are based on your library.<br><br><a class="btn primary" href="#/charts">Browse the charts</a></div>`;
@@ -612,7 +613,9 @@ async function viewDiscover() {
   }
   view.innerHTML = `<h1>Discover</h1>
     <p class="sub">Based on ${d.seeds.length} artist${d.seeds.length > 1 ? "s" : ""} in your library.</p>
-    <h2>Recommended for you</h2>
+    ${d.albums.length ? `<h2>Albums for you</h2>${albumGrid(d.albums)}` : ""}
+    ${d.songs.length ? `<h2>Songs for you <small>requesting a song adds its whole album</small></h2>${tracksList(d.songs)}` : ""}
+    <h2>Artists for you</h2>
     <div class="grid">${d.recommended.map(artistCard).join("")}</div>
     ${d.rows.filter((r) => r.artists.length).map((r) => `
       <h2>Because you have <a href="#/artist/${r.seed.id}" style="text-decoration:underline">${esc(r.seed.name)}</a></h2>

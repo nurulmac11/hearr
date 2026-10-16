@@ -15,6 +15,7 @@ from . import auth, config, store
 from .deezer import Deezer, DeezerError
 from .lidarr import Lidarr, LidarrError
 from .qbit import Qbit
+from .recommend import best_albums, dedupe_tracks, interleave
 from .matching import (AUTO_ACCEPT, SUGGEST_MIN, artist_matches, clean_title, norm_artist, norm_title,
                        score_candidate)
 
@@ -403,9 +404,47 @@ async def discover():
         out = artist_out(info[rid])
         out["because"] = because[rid][:3]
         recommended.append(out)
+    albums, songs = await _recommend_albums_and_songs(recommended[:DISCOVER_ARTISTS])
     all_artists = recommended + [a for row in rows for a in row["artists"]]
-    await annotate([], all_artists)
-    return {"seeds": [artist_out(s) for s in seeds], "recommended": recommended, "rows": rows}
+    await annotate(albums + [t["album"] for t in songs], all_artists)
+    # Hide what you already own; requested/downloading items stay visible with their status.
+    albums = [a for a in albums if a["status"] != "library"][:DISCOVER_ALBUMS]
+    songs = [t for t in songs if t["album"] and t["album"]["status"] != "library"][:DISCOVER_SONGS]
+    return {"seeds": [artist_out(s) for s in seeds], "recommended": recommended,
+            "albums": albums, "songs": songs, "rows": rows}
+
+
+DISCOVER_ARTISTS = 15   # top recommended artists that albums and songs are drawn from
+DISCOVER_ALBUMS = 24
+DISCOVER_SONGS = 30
+
+
+async def _recommend_albums_and_songs(artists: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Popular albums and songs by the best recommended artists, best artist first.
+
+    Songs are requested as their album (Hearr only requests whole albums).
+    """
+    if not artists:
+        return [], []
+    albums_raw, tops_raw = await asyncio.gather(
+        asyncio.gather(*(dz.artist_albums(a["id"]) for a in artists), return_exceptions=True),
+        asyncio.gather(*(dz.artist_top(a["id"], 6) for a in artists), return_exceptions=True),
+    )
+    album_groups, song_groups = [], []
+    for artist, raw_albums, raw_top in zip(artists, albums_raw, tops_raw):
+        because = artist.get("because", [])
+        if isinstance(raw_albums, list):
+            group = [album_out(al, artist) for al in best_albums(raw_albums, 2)]
+            for a in group:
+                a["because"] = because
+            album_groups.append(group)
+        if isinstance(raw_top, list):
+            group = [track_out(t) for t in dedupe_tracks(raw_top)[:3]]
+            for t in group:
+                t["because"] = because
+            song_groups.append(group)
+    # Over-fetch: owned items are filtered out after annotation.
+    return interleave(album_groups, DISCOVER_ALBUMS * 2), interleave(song_groups, DISCOVER_SONGS * 2)
 
 
 # --- API: requesting ----------------------------------------------------------
