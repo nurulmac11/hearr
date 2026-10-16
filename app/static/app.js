@@ -606,8 +606,8 @@ async function viewNew() {
 }
 
 async function viewDiscover() {
-  // Each tab has its own endpoint, so the first one shows as soon as it is ready and the rest
-  // load in the background (they are usually done by the time you click them).
+  // Each tab has its own endpoint: all of them load in parallel and the tab you are on shows
+  // as soon as its own data is ready.
   const sections = [
     ["albums", "Albums", (items) => albumGrid(items)],
     ["missing", "Missing", (items) => `<p class="sub">Popular albums by artists you already have, that aren't in your library yet.</p>${albumGrid(items)}`],
@@ -652,9 +652,10 @@ async function viewDiscover() {
       try { sessionStorage.setItem("discoverTab", tab); } catch { /* ignore */ }
       render();
     });
-    // Warm the other tabs one by one while you look at this one.
-    for (const [k] of sections) { try { await load(k); } catch { /* shown when opened */ } }
   };
+  // Start every tab's request at once; the server shares the common Deezer work between them.
+  // A failure is only reported when that tab is opened.
+  sections.forEach(([k]) => load(k).catch(() => {}));
   render();
 }
 
