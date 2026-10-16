@@ -48,3 +48,8 @@ def dedupe_tracks(tracks: list[dict]) -> list[dict]:
         seen.add(key)
         out.append(t)
     return out
+
+
+def top_missing(groups: list[list[dict]], per_artist: int, limit: int) -> list[dict]:
+    """Albums missing from the library: each artist's best few, artists you own most of first."""
+    return interleave([g[:per_artist] for g in groups if g], limit)

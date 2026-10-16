@@ -503,6 +503,7 @@ function albumCard(a, { showArtist = true, showType = false } = {}) {
       <div class="t" title="${esc(a.title)}">${esc(a.title)}</div>
       <div class="s">${sub}</div>
       ${a.because && a.because.length ? `<div class="because">Like ${esc(a.because.join(", "))}</div>` : ""}
+      ${a.note ? `<div class="because">${esc(a.note)}</div>` : ""}
     </div>`;
 }
 
@@ -613,6 +614,7 @@ async function viewDiscover() {
   }
   const sections = [
     ["albums", "Albums", d.albums.length, () => albumGrid(d.albums)],
+    ["missing", "Missing", d.missing.length, () => `<p class="sub">Popular albums by artists you already have, that aren't in your library yet.</p>${albumGrid(d.missing)}`],
     ["songs", "Songs", d.songs.length, () => `<p class="sub">Requesting a song adds its whole album.</p>${tracksList(d.songs)}`],
     ["artists", "Artists", d.recommended.length, () => `<div class="grid">${d.recommended.map(artistCard).join("")}</div>`],
     ["because", "By artist", d.rows.filter((r) => r.artists.length).length, () => d.rows.filter((r) => r.artists.length).map((r) => `

@@ -15,7 +15,7 @@ from . import auth, config, store
 from .deezer import Deezer, DeezerError
 from .lidarr import Lidarr, LidarrError
 from .qbit import Qbit
-from .recommend import best_albums, dedupe_tracks, interleave
+from .recommend import best_albums, dedupe_tracks, interleave, top_missing
 from .matching import (AUTO_ACCEPT, SUGGEST_MIN, artist_matches, clean_title, norm_artist, norm_title,
                        score_candidate)
 
@@ -383,7 +383,7 @@ async def album(album_id: int):
 async def discover():
     snap = await _snapshot_or_none()
     if not snap or not snap["artists"]:
-        return {"seeds": [], "recommended": [], "rows": []}
+        return {"seeds": [], "recommended": [], "albums": [], "songs": [], "missing": [], "rows": []}
 
     names = [a["artistName"] for a in snap["artists"]][:30]
     found = await asyncio.gather(*(_deezer_artist_for(n) for n in names), return_exceptions=True)
@@ -410,18 +410,47 @@ async def discover():
         out["because"] = because[rid][:3]
         recommended.append(out)
     albums, songs = await _recommend_albums_and_songs(recommended[:DISCOVER_ARTISTS])
+    missing_groups = await _missing_album_groups(snap, seeds)
     all_artists = recommended + [a for row in rows for a in row["artists"]]
-    await annotate(albums + [t["album"] for t in songs], all_artists)
+    await annotate(albums + [t["album"] for t in songs] + [a for g in missing_groups for a in g], all_artists)
+    missing = top_missing([[a for a in g if a["status"] != "library"] for g in missing_groups],
+                          DISCOVER_MISSING_PER_ARTIST, DISCOVER_MISSING)
     # Hide what you already own; requested/downloading items stay visible with their status.
     albums = [a for a in albums if a["status"] != "library"][:DISCOVER_ALBUMS]
     songs = [t for t in songs if t["album"] and t["album"]["status"] != "library"][:DISCOVER_SONGS]
     return {"seeds": [artist_out(s) for s in seeds], "recommended": recommended,
-            "albums": albums, "songs": songs, "rows": rows}
+            "albums": albums, "songs": songs, "missing": missing, "rows": rows}
 
 
 DISCOVER_ARTISTS = 15   # top recommended artists that albums and songs are drawn from
 DISCOVER_ALBUMS = 24
 DISCOVER_SONGS = 30
+DISCOVER_MISSING = 30
+DISCOVER_MISSING_PER_ARTIST = 3
+MISSING_CANDIDATES = 8  # albums per artist checked against the library
+
+
+async def _missing_album_groups(snap: dict, seeds: list[dict]) -> list[list[dict]]:
+    """Per library artist (most owned albums first): their most popular albums, annotated.
+
+    Callers drop the ones already in the library after annotate() has set each status.
+    """
+    names = {a["id"]: norm_artist(a["artistName"]) for a in snap["artists"]}
+    owned: Counter = Counter(names[al["artistId"]] for al in snap["albums"]
+                             if al["artistId"] in names and lidarr.album_state(al) == "library")
+    ranked = sorted((s for s in seeds if owned[norm_artist(s["name"])]),
+                    key=lambda s: owned[norm_artist(s["name"])], reverse=True)
+    raws = await asyncio.gather(*(dz.artist_albums(s["id"]) for s in ranked), return_exceptions=True)
+    groups = []
+    for seed, raw in zip(ranked, raws):
+        if not isinstance(raw, list):
+            continue
+        n = owned[norm_artist(seed["name"])]
+        group = [album_out(al, seed) for al in best_albums(raw, MISSING_CANDIDATES)]
+        for a in group:
+            a["note"] = f"You own {n} album{'s' if n != 1 else ''} by them"
+        groups.append(group)
+    return groups
 
 
 async def _recommend_albums_and_songs(artists: list[dict]) -> tuple[list[dict], list[dict]]:

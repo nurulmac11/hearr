@@ -1,4 +1,4 @@
-from app.recommend import best_albums, dedupe_tracks, interleave
+from app.recommend import best_albums, dedupe_tracks, interleave, top_missing
 
 
 def alb(title, fans, kind="album", date="2020-01-01"):
@@ -29,3 +29,9 @@ def test_dedupe_tracks_drops_repeat_songs_by_same_artist():
     t = lambda title, artist: {"title": title, "artist": {"name": artist}}
     out = dedupe_tracks([t("Creep", "Radiohead"), t("Creep - Remastered", "Radiohead"), t("Creep", "Other")])
     assert [(x["title"], x["artist"]["name"]) for x in out] == [("Creep", "Radiohead"), ("Creep", "Other")]
+
+
+def test_top_missing_takes_a_few_per_artist_in_order():
+    groups = [["a1", "a2", "a3", "a4"], [], ["b1"], ["c1", "c2"]]
+    assert top_missing(groups, 2, 10) == ["a1", "b1", "c1", "a2", "c2"]
+    assert top_missing(groups, 2, 3) == ["a1", "b1", "c1"]
