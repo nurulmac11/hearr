@@ -609,10 +609,10 @@ async function viewDiscover() {
   // Each tab has its own endpoint: all of them load in parallel and the tab you are on shows
   // as soon as its own data is ready.
   const sections = [
-    ["albums", "Albums", (items) => albumGrid(items)],
     ["missing", "Missing", (items) => `<p class="sub">Popular albums by artists you already have, that aren't in your library yet.</p>${albumGrid(items)}`],
-    ["songs", "Songs", (items) => `<p class="sub">Requesting a song adds its whole album.</p>${tracksList(items)}`],
     ["artists", "Artists", (items) => `<div class="grid">${items.map(artistCard).join("")}</div>`],
+    ["albums", "Albums", (items) => albumGrid(items)],
+    ["songs", "Songs", (items) => `<p class="sub">Requesting a song adds its whole album.</p>${tracksList(items)}`],
     ["because", "By artist", (items) => items.filter((r) => r.artists.length).map((r) => `
       <h2>Because you have <a href="#/artist/${r.seed.id}" style="text-decoration:underline">${esc(r.seed.name)}</a></h2>
       ${artistRow(r.artists)}`).join("")],
