@@ -59,6 +59,11 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     for k, v in SECURITY_HEADERS.items():
         response.headers.setdefault(k, v)
+    # The UI has no build step or hashed filenames: make browsers revalidate so a new
+    # version shows up without a hard refresh.
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 

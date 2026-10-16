@@ -611,15 +611,32 @@ async function viewDiscover() {
     view.innerHTML = `<h1>Discover</h1><div class="empty">Add a few artists to Lidarr first. Recommendations are based on your library.<br><br><a class="btn primary" href="#/charts">Browse the charts</a></div>`;
     return;
   }
-  view.innerHTML = `<h1>Discover</h1>
-    <p class="sub">Based on ${d.seeds.length} artist${d.seeds.length > 1 ? "s" : ""} in your library.</p>
-    ${d.albums.length ? `<h2>Albums for you</h2>${albumGrid(d.albums)}` : ""}
-    ${d.songs.length ? `<h2>Songs for you <small>requesting a song adds its whole album</small></h2>${tracksList(d.songs)}` : ""}
-    <h2>Artists for you</h2>
-    <div class="grid">${d.recommended.map(artistCard).join("")}</div>
-    ${d.rows.filter((r) => r.artists.length).map((r) => `
+  const sections = [
+    ["albums", "Albums", d.albums.length, () => albumGrid(d.albums)],
+    ["songs", "Songs", d.songs.length, () => `<p class="sub">Requesting a song adds its whole album.</p>${tracksList(d.songs)}`],
+    ["artists", "Artists", d.recommended.length, () => `<div class="grid">${d.recommended.map(artistCard).join("")}</div>`],
+    ["because", "By artist", d.rows.filter((r) => r.artists.length).length, () => d.rows.filter((r) => r.artists.length).map((r) => `
       <h2>Because you have <a href="#/artist/${r.seed.id}" style="text-decoration:underline">${esc(r.seed.name)}</a></h2>
-      ${artistRow(r.artists)}`).join("")}`;
+      ${artistRow(r.artists)}`).join("")],
+  ].filter(([, , count]) => count);
+  let tab = "";
+  try { tab = sessionStorage.getItem("discoverTab") || ""; } catch { /* ignore */ }
+  if (!sections.some(([k]) => k === tab)) tab = sections[0][0];
+
+  const render = () => {
+    view.innerHTML = `<h1>Discover</h1>
+      <p class="sub">Based on ${d.seeds.length} artist${d.seeds.length > 1 ? "s" : ""} in your library.</p>
+      <div class="tabs">${sections.map(([k, label, count]) =>
+        `<button class="tab ${k === tab ? "active" : ""}" data-t="${k}">${label} <small>${count}</small></button>`).join("")}</div>
+      <div style="margin-top:16px">${sections.find(([k]) => k === tab)[3]()}</div>`;
+    view.querySelectorAll("[data-t]").forEach((b) => b.onclick = () => {
+      tab = b.dataset.t;
+      try { sessionStorage.setItem("discoverTab", tab); } catch { /* ignore */ }
+      render();
+      window.scrollTo(0, 0);
+    });
+  };
+  render();
 }
 
 async function viewSearch(q) {
