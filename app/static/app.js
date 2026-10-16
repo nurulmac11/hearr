@@ -606,37 +606,54 @@ async function viewNew() {
 }
 
 async function viewDiscover() {
-  view.innerHTML = "<h1>Discover</h1><p class='sub'>Finding albums, songs and artists similar to your library…</p>" + skeletonGrid(8);
-  const d = await api("/discover");
-  if (!d.seeds.length) {
-    view.innerHTML = `<h1>Discover</h1><div class="empty">Add a few artists to Lidarr first. Recommendations are based on your library.<br><br><a class="btn primary" href="#/charts">Browse the charts</a></div>`;
-    return;
-  }
+  // Each tab has its own endpoint, so the first one shows as soon as it is ready and the rest
+  // load in the background (they are usually done by the time you click them).
   const sections = [
-    ["albums", "Albums", d.albums.length, () => albumGrid(d.albums)],
-    ["missing", "Missing", d.missing.length, () => `<p class="sub">Popular albums by artists you already have, that aren't in your library yet.</p>${albumGrid(d.missing)}`],
-    ["songs", "Songs", d.songs.length, () => `<p class="sub">Requesting a song adds its whole album.</p>${tracksList(d.songs)}`],
-    ["artists", "Artists", d.recommended.length, () => `<div class="grid">${d.recommended.map(artistCard).join("")}</div>`],
-    ["because", "By artist", d.rows.filter((r) => r.artists.length).length, () => d.rows.filter((r) => r.artists.length).map((r) => `
+    ["albums", "Albums", (items) => albumGrid(items)],
+    ["missing", "Missing", (items) => `<p class="sub">Popular albums by artists you already have, that aren't in your library yet.</p>${albumGrid(items)}`],
+    ["songs", "Songs", (items) => `<p class="sub">Requesting a song adds its whole album.</p>${tracksList(items)}`],
+    ["artists", "Artists", (items) => `<div class="grid">${items.map(artistCard).join("")}</div>`],
+    ["because", "By artist", (items) => items.filter((r) => r.artists.length).map((r) => `
       <h2>Because you have <a href="#/artist/${r.seed.id}" style="text-decoration:underline">${esc(r.seed.name)}</a></h2>
       ${artistRow(r.artists)}`).join("")],
-  ].filter(([, , count]) => count);
+  ];
   let tab = "";
   try { tab = sessionStorage.getItem("discoverTab") || ""; } catch { /* ignore */ }
   if (!sections.some(([k]) => k === tab)) tab = sections[0][0];
 
-  const render = () => {
-    view.innerHTML = `<h1>Discover</h1>
-      <p class="sub">Based on ${d.seeds.length} artist${d.seeds.length > 1 ? "s" : ""} in your library.</p>
-      <div class="tabs">${sections.map(([k, label, count]) =>
-        `<button class="tab ${k === tab ? "active" : ""}" data-t="${k}">${label} <small>${count}</small></button>`).join("")}</div>
-      <div style="margin-top:16px">${sections.find(([k]) => k === tab)[3]()}</div>`;
+  const data = {};   // part -> promise of the API response
+  const load = (k) => data[k] || (data[k] = api(`/discover/${k}`).catch((e) => { delete data[k]; throw e; }));
+  const nSeeds = { n: null };
+  const frame = (body) => `<h1>Discover</h1>
+    <p class="sub">${nSeeds.n === null ? "Finding music similar to your library…" : `Based on ${nSeeds.n} artist${nSeeds.n > 1 ? "s" : ""} in your library.`}</p>
+    <div class="tabs">${sections.map(([k, label]) =>
+      `<button class="tab ${k === tab ? "active" : ""}" data-t="${k}">${label}</button>`).join("")}</div>
+    <div style="margin-top:16px">${body}</div>`;
+
+  const render = async () => {
+    const mine = tab;
+    view.innerHTML = frame(skeletonGrid(8));
     view.querySelectorAll("[data-t]").forEach((b) => b.onclick = () => {
       tab = b.dataset.t;
       try { sessionStorage.setItem("discoverTab", tab); } catch { /* ignore */ }
       render();
-      window.scrollTo(0, 0);
     });
+    const d = await load(mine);
+    if (tab !== mine) return;   // the user already switched tabs
+    nSeeds.n = d.seeds.length;
+    if (!d.seeds.length) {
+      view.innerHTML = `<h1>Discover</h1><div class="empty">Add a few artists to Lidarr first. Recommendations are based on your library.<br><br><a class="btn primary" href="#/charts">Browse the charts</a></div>`;
+      return;
+    }
+    const body = d.items.length ? sections.find(([k]) => k === mine)[2](d.items) : '<div class="empty">Nothing to suggest here yet.</div>';
+    view.innerHTML = frame(body);
+    view.querySelectorAll("[data-t]").forEach((b) => b.onclick = () => {
+      tab = b.dataset.t;
+      try { sessionStorage.setItem("discoverTab", tab); } catch { /* ignore */ }
+      render();
+    });
+    // Warm the other tabs one by one while you look at this one.
+    for (const [k] of sections) { try { await load(k); } catch { /* shown when opened */ } }
   };
   render();
 }

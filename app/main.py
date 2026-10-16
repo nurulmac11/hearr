@@ -1,6 +1,8 @@
 import asyncio
+import copy
 import logging
 import re
+import time
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
@@ -379,17 +381,41 @@ async def album(album_id: int):
     return {"album": info, "tracks": tracks}
 
 
-@app.get("/api/discover")
-async def discover():
+_memo_cache: dict[str, tuple[float, asyncio.Task]] = {}
+
+
+def _memo(key: str, ttl: float, make):
+    """Share one in-flight/finished computation between requests for `ttl` seconds.
+
+    The expensive Deezer work is memoized; library status is added fresh on every response.
+    Failed computations are not kept.
+    """
+    now = time.monotonic()
+    hit = _memo_cache.get(key)
+    if hit and hit[0] > now and not (hit[1].done() and hit[1].exception()):
+        return hit[1]
+    task = asyncio.ensure_future(make())
+    _memo_cache[key] = (now + ttl, task)
+    return task
+
+
+DISCOVER_TTL = 600
+
+
+async def _discover_seeds() -> tuple[dict, list[dict]]:
+    """(Lidarr snapshot, Deezer artists for the first 30 library artists)."""
     snap = await _snapshot_or_none()
     if not snap or not snap["artists"]:
-        return {"seeds": [], "recommended": [], "albums": [], "songs": [], "missing": [], "rows": []}
-
+        return snap or {}, []
     names = [a["artistName"] for a in snap["artists"]][:30]
     found = await asyncio.gather(*(_deezer_artist_for(n) for n in names), return_exceptions=True)
-    seeds = [s for s in found if isinstance(s, dict)]
-    rel_lists = await asyncio.gather(*(dz.related(s["id"], 20) for s in seeds), return_exceptions=True)
+    return snap, [s for s in found if isinstance(s, dict)]
 
+
+async def _discover_recommended() -> tuple[list[dict], list[dict]]:
+    """(recommended artists, per-seed "because you have" rows), artists not in the library."""
+    snap, seeds = await _memo("seeds", DISCOVER_TTL, _discover_seeds)
+    rel_lists = await asyncio.gather(*(dz.related(s["id"], 20) for s in seeds), return_exceptions=True)
     counts: Counter = Counter()
     because: dict[int, list[str]] = {}
     info: dict[int, dict] = {}
@@ -403,23 +429,50 @@ async def discover():
             counts[r["id"]] += 1 + (20 - rank) / 40  # agreement across seeds matters most
             because.setdefault(r["id"], []).append(seed["name"])
             info[r["id"]] = r
-
     recommended = []
     for rid, _ in counts.most_common(40):
         out = artist_out(info[rid])
         out["because"] = because[rid][:3]
         recommended.append(out)
-    albums, songs = await _recommend_albums_and_songs(recommended[:DISCOVER_ARTISTS])
-    missing_groups = await _missing_album_groups(snap, seeds)
-    all_artists = recommended + [a for row in rows for a in row["artists"]]
-    await annotate(albums + [t["album"] for t in songs] + [a for g in missing_groups for a in g], all_artists)
-    missing = top_missing([[a for a in g if a["status"] != "library"] for g in missing_groups],
-                          DISCOVER_MISSING_PER_ARTIST, DISCOVER_MISSING)
-    # Hide what you already own; requested/downloading items stay visible with their status.
-    albums = [a for a in albums if a["status"] != "library"][:DISCOVER_ALBUMS]
-    songs = [t for t in songs if t["album"] and t["album"]["status"] != "library"][:DISCOVER_SONGS]
-    return {"seeds": [artist_out(s) for s in seeds], "recommended": recommended,
-            "albums": albums, "songs": songs, "missing": missing, "rows": rows}
+    return recommended, rows
+
+
+@app.get("/api/discover/{part}")
+async def discover(part: str):
+    """One Discover tab at a time (albums | songs | missing | artists | because), so the UI can
+    show the first as soon as it is ready instead of waiting for all of them."""
+    if part not in ("albums", "songs", "missing", "artists", "because"):
+        raise HTTPException(404, "Unknown Discover section")
+    snap, seeds = await _memo("seeds", DISCOVER_TTL, _discover_seeds)
+    out: dict = {"seeds": [artist_out(s) for s in seeds]}
+    if not seeds:
+        return {**out, "items": []}
+
+    if part == "missing":
+        groups = await _memo("missing", DISCOVER_TTL, lambda: _missing_album_groups(snap, seeds))
+        groups = copy.deepcopy(groups)
+        await annotate([a for g in groups for a in g])
+        # Hide what you already own; requested/downloading items stay visible with their status.
+        items = top_missing([[a for a in g if a["status"] != "library"] for g in groups],
+                            DISCOVER_MISSING_PER_ARTIST, DISCOVER_MISSING)
+        return {**out, "items": items}
+
+    recommended, rows = await _memo("recommended", DISCOVER_TTL, _discover_recommended)
+    recommended, rows = copy.deepcopy(recommended), copy.deepcopy(rows)
+    if part == "artists":
+        await annotate([], recommended)
+        return {**out, "items": recommended}
+    if part == "because":
+        await annotate([], [a for row in rows for a in row["artists"]])
+        return {**out, "items": rows}
+
+    albums, songs = await _memo("albums_songs", DISCOVER_TTL,
+                                lambda: _recommend_albums_and_songs(recommended[:DISCOVER_ARTISTS]))
+    albums, songs = copy.deepcopy(albums), copy.deepcopy(songs)
+    await annotate(albums + [t["album"] for t in songs])
+    if part == "albums":
+        return {**out, "items": [a for a in albums if a["status"] != "library"][:DISCOVER_ALBUMS]}
+    return {**out, "items": [t for t in songs if t["album"] and t["album"]["status"] != "library"][:DISCOVER_SONGS]}
 
 
 DISCOVER_ARTISTS = 15   # top recommended artists that albums and songs are drawn from
