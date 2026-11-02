@@ -24,7 +24,7 @@
 - **One-click requests:** pick a quality (Lidarr's quality profiles) and see the estimated download size and free disk space before you request.
 - **Library status everywhere:** *In library*, *Downloading*, *Searching* or *Search now* for albums Lidarr wants but isn't looking for.
 - **Remove:** stop Lidarr wanting an album, delete its files and (optionally) its seeding torrent.
-- **Sign in with Plex:** only accounts that can access your Plex server get in.
+- **Sign in with Plex, Jellyfin or a local admin account:** only accounts on your media server get in.
 - Works on phones, and no API keys are needed for the music data.
 
 | Artist | Request | Discover |
@@ -58,7 +58,8 @@ picker applies to all of their albums. The picker warns you about this.
 ## Requirements
 
 - Lidarr v2 or newer, reachable from the Hearr container.
-- A Plex server, used for sign-in only. Your music doesn't have to be in Plex.
+- A way to sign in: a Plex or Jellyfin server (your music doesn't have to be in it), or just a
+  local admin password.
 - Optional: qBittorrent, so that **Remove** can also delete the seeding torrent.
 
 ## Quick start
@@ -71,9 +72,10 @@ curl -L -o .env https://raw.githubusercontent.com/nurulmac11/hearr/main/.env.exa
 docker compose up -d
 ```
 
-Open `http://<host>:5070` and sign in with Plex.
+Open `http://<host>:5070` and sign in.
 
-Your Plex server's ID (`PLEX_SERVER_ID`) is the `machineIdentifier` in:
+Set any of `PLEX_SERVER_ID`, `JELLYFIN_URL` and `ADMIN_PASSWORD`. Your Plex server's ID (`PLEX_SERVER_ID`) is the
+`machineIdentifier` in:
 
 ```sh
 curl -s http://<plex-host>:32400/identity
@@ -96,7 +98,10 @@ Only artists added through Hearr use it.
 | `LIDARR_ROOT_FOLDER` | `/data/Music` | Lidarr root folder for new artists |
 | `LIDARR_QUALITY_PROFILE` | `Standard` | Default quality in the picker |
 | `LIDARR_METADATA_PROFILE` | `Hearr` | Metadata profile for new artists (created if missing) |
-| `PLEX_SERVER_ID` | | **Required.** Users must have access to this Plex server |
+| `PLEX_SERVER_ID` | | Enables Plex sign-in for users with access to this Plex server |
+| `JELLYFIN_URL` | | Enables Jellyfin sign-in for users of this server, e.g. `http://jellyfin:8096` |
+| `ADMIN_PASSWORD` | | Enables a local admin account with this password |
+| `ADMIN_USERNAME` | `admin` | Username of the local admin account |
 | `CHARTS` | `global,us,uk` | Chart tabs, in order (see below) |
 | `NEW_RELEASE_DAYS` | `120` | How far back **New** looks |
 | `QBITTORRENT_URL` | | Enables deleting seeding torrents on **Remove** |
@@ -119,12 +124,25 @@ for it on deezer.com and copy the number from its URL.
 
 ## Sign-in and permissions
 
-Everything except `/api/health` needs a session. Users sign in with Plex (Plex's PIN flow). An
-account is allowed if Plex lists your server among its resources, which means the owner and
-everyone the server is shared with. Sessions last 30 days. Requests record who made them.
+Everything except `/api/health` needs a session. At least one of `PLEX_SERVER_ID`,
+`JELLYFIN_URL` and `ADMIN_PASSWORD` must be set; the sign-in screen shows whichever are configured. Sessions last 30
+days. Requests record who made them.
+
+- **Plex** uses Plex's PIN flow. An account is allowed if Plex lists your server among its
+  resources, which means the owner and everyone the server is shared with.
+- **Jellyfin** takes a username and password, which Hearr checks with your Jellyfin server and
+  doesn't store. Any enabled Jellyfin user is allowed.
+- **Local admin** (`ADMIN_USERNAME` / `ADMIN_PASSWORD`) is for setups without a media server, or a
+  fallback when Plex is down. It shares the username/password form with Jellyfin: the local
+  account is checked first, then Jellyfin.
+
+An IP that gets the username or password wrong 10 times in 15 minutes has to wait before trying
+again. Behind a reverse proxy, Hearr uses the client IP from `X-Forwarded-For`; if Hearr is reachable
+directly, clients can fake that header, so expose it only through your proxy or VPN.
 
 - Everyone who can sign in can browse and request.
-- Only the **server owner** can remove albums or artists.
+- Only the **Plex server owner**, a **Jellyfin administrator** or the **local admin** can remove
+  albums or artists.
 
 Hearr is meant for your home network or a VPN (Tailscale, WireGuard). If you expose it to the
 internet, put it behind HTTPS and set `COOKIE_SECURE=true`.
@@ -153,7 +171,7 @@ The backend is FastAPI (`app/`). The frontend is plain HTML/CSS/JS with no build
 - Hearr doesn't host or download anything itself. It asks your Lidarr to. Use it with content you
   have the right to download.
 - Music data and 30-second previews come from the [Deezer API](https://developers.deezer.com).
-  Hearr isn't affiliated with Deezer, Lidarr or Plex.
+  Hearr isn't affiliated with Deezer, Lidarr, Plex or Jellyfin.
 
 ## License
 

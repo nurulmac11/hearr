@@ -42,8 +42,14 @@
     <div class="login-card">
       <img src="/static/icon.svg" alt="" width="64" height="64">
       <h1>Hearr</h1>
-      <p class="sub">Discover music and send it to your library.<br>Sign in with a Plex account that has access to this server.</p>
-      <button id="login-btn" class="btn plex">Sign in with Plex</button>
+      <p class="sub">Discover music and send it to your library.<br>Sign in with your media server account.</p>
+      <button id="login-btn" class="btn plex" hidden>Sign in with Plex</button>
+      <p id="login-or" class="login-or" hidden>or</p>
+      <form id="pw-form" class="pw-form" hidden>
+        <input id="pw-user" name="username" autocomplete="username" placeholder="Username" aria-label="Username" required>
+        <input id="pw-pass" name="password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">
+        <button id="pw-btn" class="btn jellyfin" type="submit">Sign in</button>
+      </form>
       <p id="login-msg" class="login-msg"></p>
     </div>
   </div>

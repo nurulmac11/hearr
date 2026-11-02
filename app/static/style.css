@@ -223,7 +223,7 @@ h2 small, .sub { color: var(--muted); font-weight: 400; font-size: 14px; }
 /* --- sign in --- */
 body.locked .nav, body.locked main { visibility: hidden; }
 .login { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; }
-.login[hidden] { display: none; }
+.login[hidden], .login-card [hidden] { display: none; }
 .login-card {
   width: min(400px, 100%); text-align: center; padding: 36px 28px; border-radius: 22px;
   background: rgba(20, 22, 28, .85); border: 1px solid var(--line); backdrop-filter: blur(12px);
@@ -232,6 +232,16 @@ body.locked .nav, body.locked main { visibility: hidden; }
 .login-card h1 { margin: 6px 0 0; }
 .btn.plex { margin-top: 12px; padding: 12px 24px; font-size: 15px; background: #e5a00d; color: #1f1f1f; }
 .btn.plex:hover { filter: brightness(1.08); }
+.btn.jellyfin { justify-content: center; padding: 12px 24px; font-size: 15px; background: linear-gradient(90deg, #aa5cc3, #00a4dc); color: #fff; }
+.btn.jellyfin:hover { filter: brightness(1.08); }
+.btn.local { justify-content: center; padding: 12px 24px; font-size: 15px; }
+.login-or { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.pw-form { width: 100%; display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.pw-form input {
+  padding: 11px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-2);
+  color: var(--text); font-size: 15px; outline: none;
+}
+.pw-form input:focus { border-color: var(--accent); }
 .login-msg { color: var(--bad); min-height: 1.2em; margin: 4px 0 0; font-size: 14px; }
 .me { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--text); font-size: 13px; }
 .me img { width: 24px; height: 24px; border-radius: 50%; }
