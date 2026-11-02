@@ -16,14 +16,14 @@ async function api(path, opts = {}) {
   try { data = await res.json(); } catch { /* empty body */ }
   if (res.status === 401 && !path.startsWith("/auth/")) {
     showLogin();
-    throw new Error("Sign in with Plex first.");
+    throw new Error("Sign in first.");
   }
   if (!res.ok) throw new Error((data && data.detail) || `Request failed (${res.status})`);
   return data;
 }
 
 // ---------------------------------------------------------------------------
-// Sign in with Plex
+// Sign in with Plex, Jellyfin or the local admin account
 
 const store = {
   get: (k) => { try { return sessionStorage.getItem(k); } catch { return null; } },
@@ -31,12 +31,47 @@ const store = {
   del: (k) => { try { sessionStorage.removeItem(k); } catch { /* ignore */ } },
 };
 
-function showLogin(message = "") {
+let loginMethods = null;
+
+async function showLogin(message = "") {
   document.body.classList.add("locked");
   $("#login").hidden = false;
   $("#login-msg").textContent = message;
   $("#login-btn").disabled = false;
   $("#login-btn").textContent = "Sign in with Plex";
+  if (!loginMethods) {
+    loginMethods = await api("/auth/methods").catch(() => ({ plex: true, jellyfin: false, local: false }));
+  }
+  const m = loginMethods;
+  const pwBtn = $("#pw-btn");
+  pwBtn.disabled = false;
+  pwBtn.textContent = m.jellyfin ? "Sign in with Jellyfin" : "Sign in";
+  pwBtn.className = `btn ${m.jellyfin ? "jellyfin" : "primary local"}`;
+  $("#pw-user").placeholder = m.jellyfin ? "Jellyfin username" : "Username";
+  $("#login-btn").hidden = !m.plex;
+  $("#pw-form").hidden = !(m.jellyfin || m.local);
+  $("#login-or").hidden = !(m.plex && (m.jellyfin || m.local));
+  if (!m.plex && !m.jellyfin && !m.local && !message) {
+    $("#login-msg").textContent = "No sign-in method is configured. Set PLEX_SERVER_ID, JELLYFIN_URL or ADMIN_PASSWORD.";
+  }
+}
+
+async function passwordLogin(e) {
+  e.preventDefault();
+  const btn = $("#pw-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> Signing in…';
+  $("#login-msg").textContent = "";
+  try {
+    await api("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username: $("#pw-user").value, password: $("#pw-pass").value }),
+    });
+    location.reload();
+  } catch (err) {
+    $("#pw-pass").value = "";
+    showLogin(err.message);
+  }
 }
 
 async function startLogin() {
@@ -822,6 +857,7 @@ async function loadStatus(user) {
 }
 
 $("#login-btn").addEventListener("click", startLogin);
+$("#pw-form").addEventListener("submit", passwordLogin);
 
 (async function boot() {
   if (new URLSearchParams(location.search).has("plexauth")) {

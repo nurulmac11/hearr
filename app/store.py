@@ -24,7 +24,8 @@ create table if not exists requests (
 create index if not exists requests_deezer on requests(kind, deezer_id);
 create table if not exists sessions (
     token text primary key,
-    plex_id integer not null,
+    provider text not null,           -- plex | jellyfin | local
+    user_id text not null,
     username text not null,
     thumb text,
     owner integer not null default 0,
@@ -55,7 +56,15 @@ def db():
 
 def init() -> None:
     with db() as c:
+        sess_cols = {r["name"] for r in c.execute("pragma table_info(sessions)")}
+        if "plex_id" in sess_cols:  # before Jellyfin sign-in, every session was a Plex one
+            c.execute("alter table sessions rename to sessions_plex")
         c.executescript(SCHEMA)
+        if "plex_id" in sess_cols:
+            c.execute("insert into sessions(token, provider, user_id, username, thumb, owner, expires_at)"
+                      " select token, 'plex', plex_id, username, thumb, owner, expires_at"
+                      " from sessions_plex")
+            c.execute("drop table sessions_plex")
         cols = {r["name"] for r in c.execute("pragma table_info(requests)")}
         if "requested_by" not in cols:
             c.execute("alter table requests add column requested_by text")
@@ -109,9 +118,9 @@ def latest_album_requests() -> dict[int, dict]:
 def add_session(token: str, user: dict, expires_at: float) -> None:
     with db() as c:
         c.execute(
-            "insert into sessions(token, plex_id, username, thumb, owner, expires_at)"
-            " values (?,?,?,?,?,?)",
-            (token, user["plex_id"], user["username"], user.get("thumb"), int(user["owner"]),
+            "insert into sessions(token, provider, user_id, username, thumb, owner, expires_at)"
+            " values (?,?,?,?,?,?,?)",
+            (token, user["provider"], user["user_id"], user["username"], user.get("thumb"), int(user["owner"]),
              expires_at),
         )
 

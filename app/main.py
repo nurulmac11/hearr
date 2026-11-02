@@ -34,6 +34,8 @@ _background: set[asyncio.Task] = set()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     store.init()
+    if not (config.PLEX_SERVER_ID or config.JELLYFIN_URL or config.ADMIN_PASSWORD):
+        log.warning("No sign-in method is configured: set PLEX_SERVER_ID, JELLYFIN_URL or ADMIN_PASSWORD.")
     yield
     await dz.close()
     await lidarr.close()
@@ -76,14 +78,15 @@ async def require_login(request: Request, call_next):
         token = request.cookies.get(auth.SESSION_COOKIE)
         user = store.get_session(token) if token else None
         if not user:
-            return JSONResponse(status_code=401, content={"detail": "Sign in with Plex first."})
+            return JSONResponse(status_code=401, content={"detail": "Sign in first."})
         request.state.user = user
     return await call_next(request)
 
 
 @app.exception_handler(auth.AuthError)
 async def _auth_error(_req, exc):
-    return JSONResponse(status_code=403, content={"detail": str(exc)})
+    status = 429 if isinstance(exc, auth.TooManyAttempts) else 403
+    return JSONResponse(status_code=status, content={"detail": str(exc)})
 
 
 @app.exception_handler(DeezerError)
@@ -201,6 +204,11 @@ class PinCheck(BaseModel):
     pin_id: int
 
 
+class PasswordLogin(BaseModel):
+    username: str
+    password: str = ""
+
+
 @app.get("/api/health")
 async def health():
     return {"ok": True}
@@ -221,11 +229,34 @@ async def auth_check(body: PinCheck, response: Response):
     if not token:
         return {"done": False}
     user = await auth.authorize(token)
+    return _sign_in(user, response)
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: PasswordLogin, request: Request, response: Response):
+    if not (config.JELLYFIN_URL or config.ADMIN_PASSWORD):
+        raise HTTPException(404, "Password sign-in isn't configured.")
+    ip = request.client.host if request.client else "unknown"
+    try:
+        user = await auth.password_login(body.username.strip(), body.password, ip)
+    except auth.AuthError:
+        log.warning("Failed sign-in for %r from %s", body.username.strip(), ip)
+        raise
+    return _sign_in(user, response)
+
+
+def _sign_in(user: dict, response: Response) -> dict:
     session = auth.create_session(user)
     response.set_cookie(auth.SESSION_COOKIE, session, max_age=auth.SESSION_DAYS * 86400,
                         httponly=True, samesite="lax", secure=config.COOKIE_SECURE)
-    log.info("Signed in: %s (owner=%s)", user["username"], user["owner"])
+    log.info("Signed in with %s: %s (owner=%s)", user["provider"], user["username"], user["owner"])
     return {"done": True, "user": {"username": user["username"], "thumb": user["thumb"]}}
+
+
+@app.get("/api/auth/methods")
+async def auth_methods():
+    return {"plex": bool(config.PLEX_SERVER_ID), "jellyfin": bool(config.JELLYFIN_URL),
+            "local": bool(config.ADMIN_PASSWORD)}
 
 
 @app.get("/api/auth/me")
@@ -890,7 +921,7 @@ async def _lidarr_album_for(deezer_id: int) -> tuple[dict, dict | None]:
 
 def _require_owner(request: Request) -> None:
     if not request.state.user.get("owner"):
-        raise HTTPException(403, "Only the Plex server owner can remove music.")
+        raise HTTPException(403, "Only the server owner or an admin can remove music.")
 
 
 class SearchRequest(BaseModel):

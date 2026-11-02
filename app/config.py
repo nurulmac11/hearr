@@ -54,6 +54,11 @@ NEW_RELEASE_DAYS = int(_env("NEW_RELEASE_DAYS", "120"))
 
 # Sign in with Plex: users must have access to this Plex server (its machine identifier).
 PLEX_SERVER_ID = _env("PLEX_SERVER_ID")
+# Sign in with Jellyfin: users of this Jellyfin server can sign in with their username and password.
+JELLYFIN_URL = _env("JELLYFIN_URL").rstrip("/")
+# Local admin account, for setups without a media server or as a fallback. Set the password to enable it.
+ADMIN_USERNAME = _env("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 # Optional: lets "Remove" also delete the seeding torrent (only torrents in this category).
 QBITTORRENT_URL = _env("QBITTORRENT_URL").rstrip("/")

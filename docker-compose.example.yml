@@ -12,6 +12,7 @@ services:
       - LIDARR_ROOT_FOLDER=/music                 # a root folder that exists in Lidarr
       - LIDARR_QUALITY_PROFILE=Standard           # default choice in the quality picker
       - CHARTS=global,us,uk
+      # - JELLYFIN_URL=http://jellyfin:8096       # enables Jellyfin sign-in
       # - QBITTORRENT_URL=http://qbittorrent:8080
       # - QBITTORRENT_USER=admin
       # - COOKIE_SECURE=true                      # when served over HTTPS
