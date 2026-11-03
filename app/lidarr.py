@@ -161,6 +161,18 @@ class Lidarr:
     async def artist_lookup(self, term: str) -> list[dict]:
         return await self._req("GET", "/artist/lookup", params={"term": term}) or []
 
+    async def artist_catalogue(self, foreign_artist_id: str) -> list[dict]:
+        """Every album of an artist (Id, Title, Type, SecondaryTypes, ReleaseDate) from Lidarr's
+        metadata service. Lidarr's own album search returns at most a handful of text matches,
+        so releases like "?" can't be found there."""
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.get(f"{config.LIDARR_METADATA_URL}/artist/{foreign_artist_id}")
+                r.raise_for_status()
+                return r.json().get("Albums") or []
+        except (httpx.HTTPError, ValueError) as e:
+            raise LidarrError(f"Lidarr metadata service: {e}") from e
+
     async def add_album(self, lookup_album: dict, quality_id: int | None = None) -> dict:
         """Add a looked-up album. Adds its artist too if needed, monitoring nothing else."""
         p = await self.profiles()
