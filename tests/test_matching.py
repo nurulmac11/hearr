@@ -1,5 +1,5 @@
 from app.matching import (AUTO_ACCEPT, artist_matches, clean_title, norm_artist, norm_title,
-                          score_candidate)
+                          score_candidate, title_similarity)
 
 
 def test_clean_title_drops_edition_and_features():
@@ -79,3 +79,11 @@ def test_renamed_artist_matches_via_disambiguation():
                         "Ye", "My Beautiful Dark Twisted Fantasy", 2010, "Album", [],
                         "formerly Kanye West")
     assert s >= AUTO_ACCEPT
+
+
+def test_symbol_only_titles_match_themselves():
+    # XXXTENTACION's album is literally called "?"; folding used to turn it into "".
+    assert norm_title("?") == "?"
+    assert title_similarity("?", "?") == 1.0
+    assert title_similarity("?", "÷") < 0.5
+    assert title_similarity("?", "Members Only, Vol. 4") == 0.0

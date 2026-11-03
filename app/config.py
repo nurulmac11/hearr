@@ -11,6 +11,8 @@ LIDARR_API_KEY = _env("LIDARR_API_KEY")
 LIDARR_ROOT_FOLDER = _env("LIDARR_ROOT_FOLDER", "/data/Music")
 LIDARR_QUALITY_PROFILE = _env("LIDARR_QUALITY_PROFILE", "Standard")
 LIDARR_METADATA_PROFILE = _env("LIDARR_METADATA_PROFILE", "Hearr")
+# Lidarr's metadata service; used to list an artist's whole catalogue when text search misses.
+LIDARR_METADATA_URL = _env("LIDARR_METADATA_URL", "https://api.lidarr.audio/api/v0.4").rstrip("/")
 # Link shown in the UI for opening Lidarr in the browser.
 LIDARR_PUBLIC_URL = _env("LIDARR_PUBLIC_URL", LIDARR_URL).rstrip("/")
 

@@ -740,19 +740,57 @@ async def _find_candidates(artist_name: str, title: str, year,
         if any(artist_matches(artist_name, c["artist"]["artistName"], c["artist"].get("disambiguation"))
                for c in seen.values()):
             break
-    everything = []
-    for c in seen.values():
-        secondary = [s["name"] if isinstance(s, dict) else s for s in c.get("secondaryTypes", [])]
-        s = score_candidate(artist_name, title, year, rtype, c["artist"]["artistName"], c["title"],
-                            _year(c.get("releaseDate")), c.get("albumType"), secondary,
-                            c["artist"].get("disambiguation"))
-        everything.append((s, c))
-    everything.sort(key=lambda x: x[0], reverse=True)
+    def score_all() -> list[tuple[float, dict]]:
+        out = []
+        for c in seen.values():
+            secondary = [s["name"] if isinstance(s, dict) else s for s in c.get("secondaryTypes", [])]
+            s = score_candidate(artist_name, title, year, rtype, c["artist"]["artistName"], c["title"],
+                                _year(c.get("releaseDate")), c.get("albumType"), secondary,
+                                c["artist"].get("disambiguation"))
+            out.append((s, c))
+        return sorted(out, key=lambda x: x[0], reverse=True)
+
+    everything = score_all()
+    if not everything or everything[0][0] < AUTO_ACCEPT:
+        # Text search missed it (it returns only a few matches, and can't match titles like "?").
+        # Go through the artist's whole catalogue instead and fetch the best titles by id.
+        try:
+            added = await _catalogue_candidates(artist_name, title, year, rtype, set(seen))
+        except LidarrError as e:
+            log.warning("Catalogue lookup for %r failed: %s", artist_name, e)
+            added = []
+        if added:
+            searched.append(f"{artist_name}: full catalogue")
+            for c in added:
+                seen.setdefault(c["foreignAlbumId"], c)
+            everything = score_all()
     log.info("Lidarr lookup for %r - %r (%s, %s): searched %s, %d results; top: %s",
              artist_name, title, rtype, year, searched, len(everything),
              "; ".join(f"{c['artist']['artistName']} - {c['title']} ({c.get('albumType')}, "
                        f"{_year(c.get('releaseDate'))}) = {s:.2f}" for s, c in everything[:5]) or "none")
     return [(s, c) for s, c in everything if s > 0], everything, searched
+
+
+async def _catalogue_candidates(artist_name: str, title: str, year, rtype, known: set[str]) -> list[dict]:
+    """Best-matching albums from the artist's full catalogue, as Lidarr lookup results."""
+    artist = next((a for a in await lidarr.artist_lookup(artist_name)
+                   if artist_matches(artist_name, a["artistName"], a.get("disambiguation"))), None)
+    if not artist:
+        return []
+    scored = []
+    for al in await lidarr.artist_catalogue(artist["foreignArtistId"]):
+        if al.get("Id") in known:
+            continue
+        sc = score_candidate(artist_name, title, year, rtype, artist["artistName"], al.get("Title", ""),
+                             _year(al.get("ReleaseDate")), al.get("Type"), al.get("SecondaryTypes") or [],
+                             artist.get("disambiguation"))
+        if sc >= SUGGEST_MIN:
+            scored.append((sc, al["Id"]))
+    scored.sort(reverse=True)
+    out = []
+    for _, fid in scored[:3]:
+        out += await lidarr.album_lookup(f"lidarr:{fid}")
+    return out
 
 
 def _spawn(coro) -> None:

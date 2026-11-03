@@ -43,7 +43,10 @@ def clean_title(title: str) -> str:
 
 
 def norm_title(title: str) -> str:
-    return fold(clean_title(title))
+    # Titles made only of symbols ("?" by XXXTENTACION, "÷" by Ed Sheeran) would fold to ""
+    # and match nothing, so compare the symbols themselves.
+    t = clean_title(title)
+    return fold(t) or re.sub(r"\s+", " ", t).strip().casefold()
 
 
 def norm_artist(name: str) -> str:
